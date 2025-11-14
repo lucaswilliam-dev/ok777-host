@@ -79,9 +79,7 @@ router.get("/provider-games", async (req, res) => {
       .update(requestTime + SECRET_KEY + "gamelist" + OPERATOR_CODE)
       .digest("hex");
 
-    console.log(
-      `📡 Fetching games from ${OPERATOR_URL} for product code: ${req.query.code || 1020}`
-    );
+    console.log(`📡 Fetching games from ${OPERATOR_URL} for product`);
 
     const result = await axios.get(
       `${OPERATOR_URL}/api/operators/provider-games`,
@@ -396,14 +394,20 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
 
     const request_time = Math.floor(Date.now() / 1000);
 
-    // Get operator password from environment or use default (MD5 of "123456")
+    // Get operator password from environment or use default
     // Note: This should be configured per user in production
-    const operatorPassword =
-      process.env.OPERATOR_USER_PASSWORD ||
-      "$2b$10$aY7/JBI.F0cZ1kov3DuGyueK/dYCV6D/HCBOHh.Ixj5SUN0LGDuDq";
+    const operatorPasswordPlain =
+      process.env.OPERATOR_USER_PASSWORD || "pjg2006131!@#";
+    
+    // Game provider expects MD5 hash of password (not bcrypt or plain text)
+    // Example: "e10adc3949ba59abbe56e057f20f883e" is MD5 of "123456"
+    const operatorPassword = crypto
+      .createHash("md5")
+      .update(operatorPasswordPlain)
+      .digest("hex");
 
     const payload = {
-      operator_code: OPERATOR_CODE,
+      operator_code: OPERATOR_CODE + "_V2",
       member_account: user.id.toString(),
       password: operatorPassword,
       nickname: user.name || user.email || `user_${user.id}`,
@@ -542,7 +546,7 @@ const getProdGames = async (code: number) => {
     const requestTime = Math.floor(Date.now() / 1000);
     const sign = crypto
       .createHash("md5")
-      .update(requestTime + SECRET_KEY + "gamelist" + OPERATOR_CODE)
+      .update(requestTime + SECRET_KEY + "launchgame" + OPERATOR_CODE)
       .digest("hex");
 
     const result = await axios.get(
