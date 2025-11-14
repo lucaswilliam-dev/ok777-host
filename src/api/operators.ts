@@ -419,6 +419,8 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       operator_lobby_url: operator_lobby,
     };
 
+
+    console.log("payload========>", payload);
     // Make request to operator API with timeout
     const response = await axios.post(
       `${OPERATOR_URL}/api/operators/launch-game`,
