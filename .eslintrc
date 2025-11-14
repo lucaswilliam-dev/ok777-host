@@ -1,0 +1,37 @@
+{
+  "root": true,
+  "env": {
+    "jest": true
+  },
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "project": [
+      "./tsconfig.json",
+      "../backend/tsconfig.json"
+    ]
+  },
+  "extends": "airbnb-typescript/base",
+  "plugins": [
+    "import"
+  ],
+  "rules": {
+    "eqeqeq": "off",
+    "no-console": "off",
+    "indent": "off",
+    "@typescript-eslint/indent": "off",
+    "@typescript-eslint/space-before-blocks": "off",
+    "@typescript-eslint/keyword-spacing": "off",
+    "@typescript-eslint/dot-notation": "off"
+  },
+  "settings": {
+    "import/parsers": {
+      "@typescript-eslint/parser": [
+        ".ts",
+        ".tsx"
+      ]
+    },
+    "import/resolver": {
+      "typescript": {}
+    }
+  }
+}

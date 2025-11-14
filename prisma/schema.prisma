@@ -1,0 +1,376 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  email    String  @unique
+  password String
+  role     String
+  status   String
+  telegram String?
+  avatar   String?
+  withdrawal_password String?
+  name String?
+  phone String?
+  email_verified      Boolean  @default(false)
+  balances       Balance[]         // Relation: user's virtual balances
+  wallets        Wallet[]
+  transactions   Transaction[]
+  deposits       Deposit[]         // Relation: user's deposits
+  wagers         Wager[]
+
+  referralCode         String?       @unique        // unique referral code
+  referredById         Int?                          // who invited this user
+  referredBy           User?        @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals            User[]       @relation("UserReferrals")  // list of invited users
+
+  referralBonuses      ReferralBonus[] @relation("BonusToUser")    // all bonuses user received
+  bonusesGiven         ReferralBonus[] @relation("BonusFromUser")  // all bonuses triggered by this user
+
+
+  @@map("Users")
+}
+
+model Wager {
+  wagerCode       String   @id 
+  id              String? 
+  user            User     @relation(fields: [userId], references: [id])
+  userId          Int      // foreign key to User
+
+  action          String?
+  wagerStatus     String
+  roundId         String
+  channelCode     String?
+  wagerType       String?
+
+  amount          Decimal?  @db.Decimal(38, 18)
+  betAmount       Decimal  @db.Decimal(38, 18)
+  validBetAmount  Decimal  @db.Decimal(38, 18)
+  prizeAmount     Decimal  @db.Decimal(38, 18)
+  tipAmount       Decimal  @db.Decimal(38, 18)
+
+  settledAt       BigInt
+  gameCode        String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  currency        String   @default("USD")
+  payload Json?
+
+  @@map("Wagers")
+}
+
+model Admin {
+  id       Int     @id @default(autoincrement())
+  email    String  @unique
+  password String
+  role     String
+  status   String
+
+  @@map("Admins")
+}
+
+
+model EmailVerificationCode {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  code      String
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@map("EmailVerificationCodes")
+}
+
+model Balance {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId      Int
+  currency  String   // e.g., "ETH", "USDT", "BTC"
+  amount     Decimal @db.Decimal(18, 4) @default(0.0000)
+  lock    Decimal  @default(0) @db.Decimal(38, 18)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, currency])
+  @@map("Balances")
+}
+
+model Wallet {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      Int
+  blockchain  String   // e.g., "Ethereum", "Bitcoin", "Tron", "Solana"
+  network     String   // e.g., "mainnet", "testnet", "BSC", "Polygon"
+  publicKey   String   @unique
+  privateKey  String   // Encrypted
+  tagOrMemo   String?  // For XRP, XLM, BNB, etc.
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, blockchain, network])
+  @@map("Wallets")
+}
+
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id])
+  address     String
+  currency    String
+  amount      Decimal  @db.Decimal(38,18)
+  txId        String   
+  createdAt   DateTime @default(now())
+  type        String
+
+  @@map("Transactions")
+}
+
+model Deposit {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id])
+  orderId       String   @unique // Unique order ID for tracking
+  txHash        String   @unique // Transaction hash
+  fromAddress   String?  // Sender address (if available)
+  toAddress     String   // Recipient address (user's deposit address)
+  currency      String   // SOL, ETH, TRX, USDT, USDC
+  network       String   // Solana, Ethereum, Tron
+  amount        Decimal  @db.Decimal(38,18) // Original amount
+  rate          Decimal? @db.Decimal(38,18) // Exchange rate to USD
+  realArrival   Decimal? @db.Decimal(38,18) // Amount after conversion/fees
+  status        String   @default("pending") // pending, confirmed, failed
+  type          String   @default("crypto") // crypto, fiat
+  blockNumber   BigInt?  // Block number
+  confirmations Int      @default(0) // Number of confirmations
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  confirmedAt   DateTime? // When deposit was confirmed
+
+  @@map("Deposits")
+}
+
+model Bet {
+  id        String   @id @default(uuid())
+  txHash    String?  @unique
+  player    String?
+  token     String   // "TRX" or "USDT"
+  amount    Float
+  direction String   // "Small" or "Big"
+  result    String?  // "Small" or "Big"
+  status    String   // "pending" | "win" | "lose"
+  payout    Float?
+  blockNum  Int
+  createdAt DateTime @default(now())
+  game      Int
+  type      Int
+  userId    Int?
+
+  @@map("Bets")
+}
+
+model Log {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  adminId     Int
+  type    String
+  description String
+  createdAt   DateTime @default(now())
+
+  @@map("Logs")
+}
+
+model HashGameConfig {
+  id                          Int      @id @default(1)
+
+  type                        String   // <- added type field
+
+  // BigSmall
+  bigSmallHouseAddress        String
+
+  // Lucky
+  luckyHouseAddress           String
+
+  // NiuNiu
+  niuNiuHouseAddress          String
+
+  // BankerPlayer
+  bankerPlayerHouseAddress    String
+
+  // OddEven
+  oddEvenHouseAddress         String
+
+  updatedAt                   DateTime @updatedAt
+
+  @@map("HashGameConfigs")
+}
+
+model GameSettings {
+  id              Int      @id @default(1)
+  oddsNumerator   Int
+  oddsDenominator Int
+  feeNumerator    Int
+  feeDenominator  Int
+  trxMin          Int
+  trxMax          Int
+  usdtMin         Int
+  usdtMax         Int
+  updatedAt       DateTime @updatedAt
+
+  @@map("GameSettings")
+}
+
+model Payout {
+  id              Int      @id @default(autoincrement())
+  to   String?
+  status   String
+  currency   String
+  amount Int
+  userId  Int?
+  
+  @@map("Payouts")
+}
+
+model Product {
+  id           Int      @id @default(autoincrement())
+  provider     String
+  currency     String
+  status       String
+  providerId   Int
+  code         Int      @unique
+  name         String
+  gameType     String
+  title        String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  enabled      Boolean
+  image        String?
+}
+
+model GameCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+   @@map("GameCategories")
+}
+
+model ReferralBonus {
+  id        Int      @id @default(autoincrement())
+  userId    Int      // the inviter who earns the bonus
+  fromUserId Int     // the referred user who triggered the bonus
+  amount    Int
+  currency  String
+  status    String   @default("pending") // "pending", "paid", etc.
+  triggerType String @default("deposit") // "signup", "deposit", "first_deposit", "bet", "first_bet"
+  expiresAt DateTime? // When bonus expires
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+   user       User     @relation("BonusToUser", fields: [userId], references: [id])
+  fromUser   User     @relation("BonusFromUser", fields: [fromUserId], references: [id])
+
+  @@map("ReferralBonuses")
+}
+
+model ReferralConfig {
+  id                Int      @id @default(1)
+  depositBonusPercent Int    @default(5)
+  betBonusPercent   Int      @default(2)
+  firstDepositBonus Int      @default(10)
+  firstBetBonus     Int      @default(5)
+  signupBonus       Int      @default(5)
+  maxBonusPerUser   Int      @default(1000)
+  bonusExpiryDays   Int      @default(30)
+  enabled           Boolean  @default(true)
+  updatedAt         DateTime @updatedAt
+
+  @@map("ReferralConfigs")
+}
+
+model Game {
+  id              Int      @id @default(autoincrement())
+  gameCode        String
+  gameName        String
+  gameType        String
+  imageUrl        String
+  productId       Int
+  productCode     Int
+  supportCurrency String
+  status          String
+  allowFreeRound  Boolean
+  langName        Json
+  langIcon        Json
+  category        Int?
+  enabled         Boolean  @default(true)
+
+  provider        String?
+  coverImage      Json?
+  isHot           Boolean  @default(false)
+  isNew           Boolean  @default(false)
+  isRecommended   Boolean  @default(false)
+  onlinePlayers   Int?
+  launchParams    Json?
+  visibility      Json?
+  aggregator      String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+   @@map("Games")
+}
+
+model TempGame {
+  id              Int      @id @default(autoincrement())
+  gameCode        String
+  gameName        String
+  gameType        String
+  imageUrl        String
+  productId       Int
+  productCode     Int
+  supportCurrency String
+  status          String
+  allowFreeRound  Boolean
+  langName        Json
+  langIcon        Json
+  category        Int?
+  enabled         Boolean  @default(true)
+
+  provider        String?
+  coverImage      Json?
+  isHot           Boolean  @default(false)
+  isNew           Boolean  @default(false)
+  isRecommended   Boolean  @default(false)
+  onlinePlayers   Int?
+  launchParams    Json?
+  visibility      Json?
+  aggregator      String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("TempGames")
+}
+
+model WithdrawRequest {
+  id              Int      @id @default(autoincrement())
+  to   String
+  currency   String
+  blockchain   String
+  status   String
+  amount Int
+  userId  Int?
+  
+  @@map("WithdrawRequests")
+}

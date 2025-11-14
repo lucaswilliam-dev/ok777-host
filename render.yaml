@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: casino-back
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:dist
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true
