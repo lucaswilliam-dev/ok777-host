@@ -407,7 +407,7 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       .digest("hex");
 
     const payload = {
-      operator_code: OPERATOR_CODE + "_V2",
+      operator_code: OPERATOR_CODE,
       member_account: user.id.toString(),
       password: operatorPassword,
       nickname: user.name || user.email || `user_${user.id}`,
