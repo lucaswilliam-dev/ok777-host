@@ -110,10 +110,10 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   console.warn('⚠️  Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable Google login.');
 }
 
-passport.serializeUser((user, done) => {
+passport.serializeUser((user: any, done) => {
   done(null, user);
 });
-passport.deserializeUser((obj: Express.User, done) => {
+passport.deserializeUser((obj: any, done) => {
   done(null, obj);
 });
 
