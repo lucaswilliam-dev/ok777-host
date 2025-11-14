@@ -18,7 +18,7 @@ const crypto = require("crypto");
 const OPERATOR_CODE = process.env.OPERATOR_CODE;
 const SECRET_KEY = process.env.SECRET_KEY;
 const OPERATOR_URL = "https://staging.gsimw.com";
-const operator_lobby = "https://ok777-pink.vercel.app/lobby";
+const operator_lobby = "https://ok-777-admin-1.vercel.app";
 
 // const prisma = new PrismaClient();
 
@@ -285,7 +285,6 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
 
     const id = req["token"].id;
     const role = req["token"].role;
-    console.log("req.body================>", req.body);
 
     const {
       product_code,
