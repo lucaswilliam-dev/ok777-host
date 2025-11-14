@@ -285,6 +285,7 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
 
     const id = req["token"].id;
     const role = req["token"].role;
+    console.log("req.body================>", req.body);
 
     const {
       product_code,
@@ -418,7 +419,6 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       request_time: request_time,
       operator_lobby_url: operator_lobby,
     };
-
 
     console.log("payload========>", payload);
     // Make request to operator API with timeout
