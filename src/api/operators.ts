@@ -10,6 +10,7 @@ import {
   getTempGames,
   savedGamesBulk,
   addGame,
+  getGames,
 } from "../db/admin";
 
 const axios = require("axios");
@@ -60,214 +61,77 @@ router.get("/available-products", async (req, res) => {
 });
 
 router.get("/provider-games", async (req, res) => {
-  // Check if required environment variables are set
-  if (!OPERATOR_CODE || !SECRET_KEY) {
-    console.error(
-      "❌ Missing environment variables: OPERATOR_CODE or SECRET_KEY"
-    );
-    return res.status(500).json({
-      error: "Server configuration error",
-      message:
-        "OPERATOR_CODE and SECRET_KEY must be set in environment variables",
-    });
-  }
+  // Get pagination parameters
+  const page = req.query.page ? Number(req.query.page) : 1;
+  const limit = req.query.limit ? Number(req.query.limit) : 21;
+  const productCode = req.query.code ? Number(req.query.code) : undefined;
 
   try {
-    const requestTime = Math.floor(Date.now() / 1000);
-    const sign = crypto
-      .createHash("md5")
-      .update(requestTime + SECRET_KEY + "gamelist" + OPERATOR_CODE)
-      .digest("hex");
-
-    console.log(`📡 Fetching games from ${OPERATOR_URL} for product`);
-
-    const result = await axios.get(
-      `${OPERATOR_URL}/api/operators/provider-games`,
-      {
-        params: {
-          operator_code: OPERATOR_CODE,
-          request_time: requestTime,
-          sign: sign,
-          product_code: Number(req.query.code) || 1020,
-        },
-        headers: {
-          "Content-Type": "application/json",
-        },
-        timeout: 30000, // 30 second timeout
-      }
-    );
-
-    const data = result.data;
-    const provider_games = data.provider_games || [];
-
-    if (!provider_games || provider_games.length === 0) {
-      console.log(
-        "⚠️ No games returned from provider API, trying to return games from database"
-      );
-      // Fallback: return games from database
-      try {
-        const dbGames = await getAllGames();
-        if (dbGames && dbGames.length > 0) {
-          // Transform database games to match provider format
-          const transformedGames = dbGames.map((game: any) => ({
-            game_code: game.gameCode,
-            game_name: game.gameName,
-            game_type: game.gameType,
-            image_url: game.imageUrl,
-            product_id: game.productId,
-            product_code: game.productCode,
-            support_currency: game.supportCurrency,
-            status: game.status,
-            allow_free_round: game.allowFreeRound,
-            lang_name: game.langName,
-            lang_icon: game.langIcon,
-          }));
-
-          return res.json({
-            data: {
-              provider_games: transformedGames,
-            },
-            source: "database", // Indicate data came from database
-          });
-        }
-      } catch (dbError) {
-        console.error("❌ Database fallback failed:", dbError);
-      }
-
-      return res.json({
-        data: {
-          provider_games: [],
-        },
-        message: "No games available",
-      });
-    }
-
-    const gameTypeToCategory: Record<string, number> = {
-      LIVE_CASINO: 2,
-      SLOT: 3,
-      POKER: 4,
-      OTHER: 5,
-      FISHING: 6,
-      SPORT_BOOK: 7,
-    };
-
-    const gamesData = provider_games.map((d: any) => {
-      return {
-        gameCode: d.game_code,
-        gameName: d.game_name,
-        gameType: d.game_type,
-        imageUrl: d.image_url,
-        productId: d.product_id,
-        productCode: d.product_code,
-        supportCurrency: d.support_currency,
-        status: d.status,
-        allowFreeRound: d.allow_free_round,
-        langName: d.lang_name,
-        langIcon: d.lang_icon,
-        enabled: true,
-        category: gameTypeToCategory[d.game_type],
-      };
+    // Fetch games directly from database with pagination
+    const result = await getGames({
+      page: page,
+      limit: limit,
+      providerId: productCode ? productCode.toString() : undefined,
+      enabled: true, // Only fetch enabled games
     });
 
-    // Get existing games to avoid duplicates
-    const existingGames = await getAllGames();
-    const existingGameCodes = new Set(
-      existingGames.map((game: any) => game.gameCode)
-    );
+    // Transform database games to match provider format
+    const transformedGames = result.data.map((game: any) => ({
+      game_code: game.gameCode,
+      game_name: game.gameName,
+      game_type: game.gameType,
+      image_url: game.imageUrl,
+      product_id: game.productId,
+      product_code: game.productCode,
+      support_currency: game.supportCurrency,
+      status: game.status,
+      allow_free_round: game.allowFreeRound,
+      lang_name: game.langName,
+      lang_icon: game.langIcon,
+    }));
 
-    // Insert only new games that don't exist in database
-    let inserted = 0;
-    let skipped = 0;
-    for (const g of gamesData) {
-      // Skip if game already exists
-      if (existingGameCodes.has(g.gameCode)) {
-        skipped++;
-        continue;
-      }
-
-      try {
-        await addGame(g);
-        inserted++;
-      } catch (e) {
-        // Handle any other errors
-        console.error(`Failed to insert game ${g.gameCode}:`, e);
+    // Additional deduplication safety layer - remove any duplicates by game_code
+    const uniqueGamesMap = new Map();
+    for (const game of transformedGames) {
+      if (!uniqueGamesMap.has(game.game_code)) {
+        uniqueGamesMap.set(game.game_code, game);
       }
     }
-    console.log(
-      `✅ Games inserted: ${inserted}, skipped (already exist): ${skipped}, total: ${gamesData.length}`
-    );
+    const uniqueGames = Array.from(uniqueGamesMap.values());
 
-    return res.json({ data: result.data });
+    return res.json({
+      data: {
+        provider_games: uniqueGames,
+      },
+      pagination: {
+        total: result.meta.total,
+        page: result.meta.page,
+        limit: limit,
+        totalPages: result.meta.totalPages,
+      },
+      source: "database",
+    });
   } catch (err: any) {
-    console.error("❌ Request failed:", err.message);
+    console.error("❌ Database query failed:", err.message);
     console.error("Error details:", {
       code: err.code,
       message: err.message,
-      response: err.response?.data,
-      status: err.response?.status,
     });
 
-    // Try to return games from database as fallback
-    try {
-      console.log("🔄 Attempting to return games from database as fallback...");
-      const dbGames = await getAllGames();
-      if (dbGames && dbGames.length > 0) {
-        // Transform database games to match provider format
-        const transformedGames = dbGames.map((game: any) => ({
-          game_code: game.gameCode,
-          game_name: game.gameName,
-          game_type: game.gameType,
-          image_url: game.imageUrl,
-          product_id: game.productId,
-          product_code: game.productCode,
-          support_currency: game.supportCurrency,
-          status: game.status,
-          allow_free_round: game.allowFreeRound,
-          lang_name: game.langName,
-          lang_icon: game.langIcon,
-        }));
-
-        console.log(
-          `✅ Returning ${transformedGames.length} games from database`
-        );
-        return res.json({
-          data: {
-            provider_games: transformedGames,
-          },
-          source: "database",
-          warning: "Provider API unavailable, showing cached games",
-        });
-      }
-    } catch (dbError) {
-      console.error("❌ Database fallback also failed:", dbError);
-    }
-
-    // Determine error message based on error type
-    let errorMessage = "Failed to fetch provider games";
-    if (err.code === "ECONNRESET") {
-      errorMessage =
-        "Connection to provider API was reset. Please check your network connection and try again.";
-    } else if (err.code === "ETIMEDOUT" || err.code === "ECONNABORTED") {
-      errorMessage =
-        "Request to provider API timed out. The service may be temporarily unavailable.";
-    } else if (err.code === "ENOTFOUND") {
-      errorMessage =
-        "Could not resolve provider API hostname. Please check your network connection.";
-    } else if (err.response?.data?.message) {
-      errorMessage = err.response.data.message;
-    } else if (err.message) {
-      errorMessage = err.message;
-    }
-
-    return res.status(err.response?.status || 500).json({
-      error: errorMessage,
-      message: errorMessage,
-      code: err.code || "UNKNOWN_ERROR",
+    return res.status(500).json({
+      error: "Failed to fetch games from database",
+      message: err.message || "Internal server error",
+      code: err.code || "DATABASE_ERROR",
     });
   }
 });
 
 router.post("/launch-game", isAuthenticated, async (req, res) => {
+  // Declare variables outside try block for error handling
+  let memberAccount: string = "";
+  let gameCode: string | number = "";
+  let productCode: number = 0;
+
   try {
     // Validate environment variables
     if (!OPERATOR_CODE || !SECRET_KEY) {
@@ -291,6 +155,10 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       game_code,
       language_code = 0,
     } = req.body || {};
+
+    // Store for error handling
+    gameCode = game_code;
+    productCode = Number(product_code);
 
     // Input validation
     if (!product_code) {
@@ -331,6 +199,89 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
         message: "language_code must be a valid number",
         code: 400,
       });
+    }
+
+    // Validate game_code format
+    if (typeof game_code !== "string" && typeof game_code !== "number") {
+      return res.status(400).json({
+        success: false,
+        message: "game_code must be a string or number",
+        code: 400,
+      });
+    }
+
+    // Verify game exists in provider's game list BEFORE launching
+    try {
+      console.log(
+        `🔍 Verifying game code "${game_code}" exists for product ${product_code}...`
+      );
+
+      // Fetch games from provider API to verify game exists
+      const requestTime = Math.floor(Date.now() / 1000);
+      const verifySign = crypto
+        .createHash("md5")
+        .update(requestTime + SECRET_KEY + "gamelist" + OPERATOR_CODE)
+        .digest("hex");
+
+      const verifyResponse = await axios.get(
+        `${OPERATOR_URL}/api/operators/provider-games`,
+        {
+          params: {
+            operator_code: OPERATOR_CODE,
+            request_time: requestTime,
+            sign: verifySign,
+            product_code: Number(product_code),
+          },
+          headers: {
+            "Content-Type": "application/json",
+          },
+          timeout: 10000, // 10 second timeout for verification
+        }
+      );
+
+      const providerGames = verifyResponse.data?.provider_games || [];
+      const gameExists = providerGames.some(
+        (g: any) => g.game_code === game_code.toString()
+      );
+
+      if (!gameExists) {
+        console.error(
+          `❌ Game code "${game_code}" NOT FOUND in provider's game list for product ${product_code}`
+        );
+        console.error(
+          `Available games for product ${product_code}:`,
+          providerGames.map((g: any) => g.game_code).slice(0, 10)
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: `Game code "${game_code}" does not exist or is not available for product ${product_code}`,
+          code: 400,
+          debug: {
+            requested_game_code: game_code,
+            requested_product_code: product_code,
+            available_game_codes: providerGames
+              .map((g: any) => ({
+                game_code: g.game_code,
+                game_name: g.game_name,
+                game_type: g.game_type,
+              }))
+              .slice(0, 20), // Show first 20 games
+            total_games_available: providerGames.length,
+          },
+        });
+      }
+
+      console.log(
+        `✅ Game code "${game_code}" verified - exists in provider's game list`
+      );
+    } catch (verifyError: any) {
+      console.warn(
+        "⚠️ Could not verify game with provider API:",
+        verifyError.message
+      );
+      console.warn("Continuing with launch request anyway...");
+      // Continue anyway - verification is helpful but not required
     }
 
     // Get user profile based on role
@@ -398,7 +349,7 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
     // Note: This should be configured per user in production
     const operatorPasswordPlain =
       process.env.OPERATOR_USER_PASSWORD || "pjg2006131!@#";
-    
+
     // Game provider expects MD5 hash of password (not bcrypt or plain text)
     // Example: "e10adc3949ba59abbe56e057f20f883e" is MD5 of "123456"
     const operatorPassword = crypto
@@ -406,13 +357,96 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       .update(operatorPasswordPlain)
       .digest("hex");
 
+    // Format member_account - ensure it's a string
+    // Some providers may require specific format (e.g., prefix + ID)
+    memberAccount = user.id.toString();
+
+    // Attempt to register member with provider if not already registered
+    // Some providers require member registration before launching games
+    try {
+      console.log(
+        `📝 Attempting to register/verify member account "${memberAccount}" with provider...`
+      );
+
+      const registerRequestTime = Math.floor(Date.now() / 1000);
+      const registerSign = crypto
+        .createHash("md5")
+        .update(
+          registerRequestTime + SECRET_KEY + "createmember" + OPERATOR_CODE
+        )
+        .digest("hex");
+
+      // Try common member registration endpoints
+      const registerEndpoints = [
+        `${OPERATOR_URL}/api/operators/create-member`,
+        `${OPERATOR_URL}/api/operators/register-member`,
+        `${OPERATOR_URL}/api/operators/member-register`,
+      ];
+
+      let memberRegistered = false;
+      for (const endpoint of registerEndpoints) {
+        try {
+          const registerPayload = {
+            operator_code: OPERATOR_CODE,
+            member_account: memberAccount,
+            nickname: user.name || user.email || `user_${user.id}`,
+            currency: currency.toUpperCase(),
+            password: operatorPassword,
+            sign: registerSign,
+            request_time: registerRequestTime,
+          };
+
+          await axios.post(endpoint, registerPayload, {
+            headers: { "Content-Type": "application/json" },
+            timeout: 5000,
+          });
+
+          console.log(
+            `✅ Member account "${memberAccount}" registered successfully`
+          );
+          memberRegistered = true;
+          break;
+        } catch (regError: any) {
+          // If endpoint doesn't exist or member already exists, continue
+          if (regError.response?.status === 404) {
+            continue; // Try next endpoint
+          }
+          if (
+            regError.response?.data?.message?.includes("already exists") ||
+            regError.response?.data?.code === 1001
+          ) {
+            console.log(
+              `ℹ️ Member account "${memberAccount}" already exists in provider system`
+            );
+            memberRegistered = true;
+            break;
+          }
+        }
+      }
+
+      if (!memberRegistered) {
+        console.warn(
+          `⚠️ Could not register member via API - member may need manual registration or first deposit`
+        );
+        console.warn(
+          `⚠️ Continuing with launch attempt - provider may auto-register on first use`
+        );
+      }
+    } catch (regError: any) {
+      console.warn("⚠️ Member registration attempt failed:", regError.message);
+      console.warn(
+        "⚠️ Continuing with launch - member may be auto-registered or already exists"
+      );
+      // Continue anyway - some providers auto-register on first launch or deposit
+    }
+
     const payload = {
       operator_code: OPERATOR_CODE,
-      member_account: user.id.toString(),
+      member_account: memberAccount,
       password: operatorPassword,
       nickname: user.name || user.email || `user_${user.id}`,
       currency: currency.toUpperCase(), // Use provided currency, default to IDR
-      game_code: game_code,
+      game_code: game_code.toString(), // Ensure game_code is string
       product_code: Number(product_code),
       game_type: game_type,
       language_code: Number(language_code),
@@ -423,7 +457,6 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       operator_lobby_url: operator_lobby,
     };
 
-    console.log("payload========>", payload);
     // Make request to operator API with timeout
     const response = await axios.post(
       `${OPERATOR_URL}/api/operators/launch-game`,
@@ -442,6 +475,7 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
         code: 200,
       });
     } else {
+      console.log("response==========>", response.data);
       console.error("Launch game error:", response.data);
       return res.status(400).json({
         success: false,
@@ -468,11 +502,55 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
     }
 
     if (err.response?.data) {
-      return res.status(err.response.status || 500).json({
-        success: false,
-        message: err.response.data.message || "Failed to launch game",
-        code: err.response.status || 500,
-      });
+      const errorData = err.response.data;
+      const errorCode = errorData.code || err.response.status || 500;
+      const errorMessage = errorData.message || "Failed to launch game";
+
+      // Enhanced error messages for common issues
+      let userFriendlyMessage = errorMessage;
+
+      if (errorCode === 999) {
+        if (
+          errorMessage.includes("record not found") ||
+          errorMessage.includes("agent not found")
+        ) {
+          // Since we verified the game exists, this is most likely a member registration issue
+          userFriendlyMessage = `❌ Record not found (Code 999)
+
+🔍 Diagnosis:
+Since the game code was verified successfully, the issue is most likely:
+**Member account "${memberAccount || "N/A"}" is NOT registered with the game provider.**
+
+📋 Solutions:
+1. **Contact your provider** to register member account "${memberAccount}"
+2. **Make a first deposit** - some providers auto-register members on first deposit
+3. **Check provider documentation** for member registration endpoint
+4. **Verify operator account** is fully configured and active
+
+💡 Note: The game code and product code are valid. This is a member registration issue.`;
+        }
+      }
+
+      console.error("❌ Provider API Error Response:");
+      console.error("Code:", errorCode);
+      console.error("Message:", errorMessage);
+      console.error("Details:", errorData.details || "No additional details");
+      console.error("Full Response:", JSON.stringify(errorData, null, 2));
+
+      return res
+        .status(errorCode >= 400 && errorCode < 600 ? errorCode : 500)
+        .json({
+          success: false,
+          message: userFriendlyMessage,
+          code: errorCode,
+          details: errorData.details || null,
+          debug: {
+            operator_code: OPERATOR_CODE,
+            member_account: memberAccount || "N/A",
+            game_code: gameCode || "N/A",
+            product_code: productCode || "N/A",
+          },
+        });
     }
 
     return res.status(500).json({

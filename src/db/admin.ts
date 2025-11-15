@@ -707,18 +707,29 @@ export const getGames = async (options: {
     if (enabled !== undefined) where.enabled = enabled;
     if (search) where.gameName = { contains: search, mode: "insensitive" };
 
-    const [games, total] = await prisma.$transaction([
-        prisma.game.findMany({
-            where,
-            skip,
-            take: limit,
-            orderBy: { createdAt: "desc" },
-        }),
-        prisma.game.count({ where }),
-    ]);
+    // First, get all games and deduplicate by gameCode (keep the most recent one)
+    const allGames = await prisma.game.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+    });
+
+    // Deduplicate by gameCode - keep only the first occurrence (most recent due to orderBy)
+    const uniqueGamesMap = new Map();
+    for (const game of allGames) {
+        if (!uniqueGamesMap.has(game.gameCode)) {
+            uniqueGamesMap.set(game.gameCode, game);
+        }
+    }
+
+    // Convert map values back to array
+    const uniqueGames = Array.from(uniqueGamesMap.values());
+
+    // Apply pagination to unique games
+    const total = uniqueGames.length;
+    const paginatedGames = uniqueGames.slice(skip, skip + limit);
 
     return {
-        data: games,
+        data: paginatedGames,
         meta: {
             total,
             page,
