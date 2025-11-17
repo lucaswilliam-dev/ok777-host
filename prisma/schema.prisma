@@ -314,7 +314,6 @@ model Game {
   langIcon        Json
   category        Int?
   enabled         Boolean  @default(true)
-
   provider        String?
   coverImage      Json?
   isHot           Boolean  @default(false)

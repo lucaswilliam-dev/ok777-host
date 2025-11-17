@@ -335,8 +335,22 @@ router.post("/update-game-settings", isAdmin, async (req, res) => {
 
 router.get("/products", isAdmin, async (req, res) => {
   try {
-    const products = await getAllProducts();
-    res.json({ code: 200, data: products });
+    const page = req.query.page ? Number(req.query.page) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    
+    const result = await getAllProducts(page, limit);
+    
+    if (page !== undefined && limit !== undefined && typeof result === 'object' && 'data' in result) {
+      // Paginated response
+      res.json({ 
+        code: 200, 
+        data: result.data,
+        pagination: result.meta,
+      });
+    } else {
+      // Non-paginated response (for backward compatibility)
+      res.json({ code: 200, data: result });
+    }
   } catch (err) {
     res.status(500).json({ code: 500, message: "Failed to fetch products" });
   }

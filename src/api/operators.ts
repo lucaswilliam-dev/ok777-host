@@ -34,7 +34,7 @@ router.get("/available-products", async (req, res) => {
     const requestTime = Math.floor(Date.now() / 1000);
     const sign = crypto
       .createHash("md5")
-      .update(requestTime + SECRET_KEY + "productlist" + OPERATOR_CODE)
+      .update(requestTime + SECRET_KEY + "product list" + OPERATOR_CODE)
       .digest("hex");
 
     const result = await axios.get(
@@ -44,7 +44,6 @@ router.get("/available-products", async (req, res) => {
           operator_code: OPERATOR_CODE,
           request_time: requestTime,
           sign: sign,
-          product_code: 1020,
         },
         headers: {
           "Content-Type": "application/json",
@@ -60,19 +59,72 @@ router.get("/available-products", async (req, res) => {
   }
 });
 
-router.get("/provider-games", async (req, res) => {
+router.get("/provided-games", async (req, res) => {
   // Get pagination parameters
   const page = req.query.page ? Number(req.query.page) : 1;
   const limit = req.query.limit ? Number(req.query.limit) : 21;
   const productCode = req.query.code ? Number(req.query.code) : undefined;
+  
+  // Get search and filter parameters
+  const search = req.query.search as string | undefined;
+  const categoryName = req.query.category as string | undefined;
+  const providerName = req.query.provider as string | undefined;
 
   try {
-    // Fetch games directly from database with pagination
+    // Map category name to category ID if provided
+    let categoryId: string | undefined = undefined;
+    if (categoryName && categoryName !== "All") {
+      // Map category names to IDs (based on gameTypeToCategory mapping)
+      const categoryNameToId: Record<string, string> = {
+        "Slot": "3",
+        "LiveCasino": "2",
+        "TableGames": "5", // Assuming TableGames maps to OTHER (5) or we need to check
+        "Poker": "4",
+        "Other": "5",
+        "Fishing": "6",
+        "Sport": "7",
+      };
+      categoryId = categoryNameToId[categoryName];
+    }
+
+    // Map provider name to product code if provided
+    let providerId: string | undefined = undefined;
+    if (providerName && providerName !== "All") {
+      // Map provider names to product codes
+      const providerNameToCode: Record<string, string> = {
+        "ag": "1",
+        "allbet": "2",
+        "bbin": "3",
+        // Add more mappings as needed
+      };
+      providerId = providerNameToCode[providerName] || productCode?.toString();
+    } else if (productCode) {
+      providerId = productCode.toString();
+    }
+
+    // Fetch games directly from database with pagination and filters
     const result = await getGames({
       page: page,
       limit: limit,
-      providerId: productCode ? productCode.toString() : undefined,
+      providerId: providerId,
+      categoryId: categoryId,
+      search: search,
       enabled: true, // Only fetch enabled games
+    });
+
+    // Get the most recent updatedAt timestamp from all games
+    const mostRecentGame = await prisma.game.findFirst({
+      where: {
+        status: "ACTIVATED",
+        enabled: true,
+        ...(productCode ? { productCode: productCode } : {}),
+      },
+      orderBy: {
+        updatedAt: "desc",
+      },
+      select: {
+        updatedAt: true,
+      },
     });
 
     // Transform database games to match provider format
@@ -88,6 +140,9 @@ router.get("/provider-games", async (req, res) => {
       allow_free_round: game.allowFreeRound,
       lang_name: game.langName,
       lang_icon: game.langIcon,
+      provider: game.provider || null, // Include provider from database
+      category: game.categoryName || game.gameType || null, // Use category name if available, fallback to gameType
+      category_id: game.category || null, // Include category ID for reference
     }));
 
     // Additional deduplication safety layer - remove any duplicates by game_code
@@ -109,6 +164,7 @@ router.get("/provider-games", async (req, res) => {
         limit: limit,
         totalPages: result.meta.totalPages,
       },
+      lastUpdated: mostRecentGame?.updatedAt || null,
       source: "database",
     });
   } catch (err: any) {
@@ -126,12 +182,179 @@ router.get("/provider-games", async (req, res) => {
   }
 });
 
+router.get("/provider-games", async (req, res) => {
+  try {
+    // Step 1: Fetch available products from third-party platform and save to Product table
+    console.log("📦 [STEP 1] Fetching available products from third-party platform...");
+    let productsProcessed = 0;
+    try {
+      const productRequestTime = Math.floor(Date.now() / 1000);
+      const productSign = crypto
+        .createHash("md5")
+        .update(productRequestTime + SECRET_KEY + "productlist" + OPERATOR_CODE)
+        .digest("hex");
+
+      const productsResult = await axios.get(
+        `${OPERATOR_URL}/api/operators/available-products`,
+        {
+          params: {
+            operator_code: OPERATOR_CODE,
+            request_time: productRequestTime,
+            sign: productSign,
+          },
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      // Save products to database
+      if (productsResult.data && Array.isArray(productsResult.data)) {
+        await saveProductsBulk(productsResult.data);
+        productsProcessed = productsResult.data.length;
+        console.log(`✅ [STEP 1] Products saved: ${productsProcessed} products processed`);
+      } else if (productsResult.data && productsResult.data.products) {
+        await saveProductsBulk(productsResult.data.products);
+        productsProcessed = productsResult.data.products.length;
+        console.log(`✅ [STEP 1] Products saved: ${productsProcessed} products processed`);
+      } else {
+        console.log("⚠️ [STEP 1] No products data found in response");
+      }
+    } catch (productErr: any) {
+      console.error("⚠️ [STEP 1] Failed to fetch/save products:", productErr.response?.data || productErr.message);
+      // Continue with games fetch even if products fetch fails
+    }
+
+    // Step 2: Fetch games from third-party platform
+    console.log("🎮 [STEP 2] Fetching games from third-party platform...");
+    const requestTime = Math.floor(Date.now() / 1000);
+    const sign = crypto
+      .createHash("md5")
+      .update(requestTime + SECRET_KEY + "gamelist" + OPERATOR_CODE)
+      .digest("hex");
+
+    const params: any = {
+      operator_code: OPERATOR_CODE,
+      request_time: requestTime,
+      sign: sign,
+    };
+
+    // Only include product_code if provided
+    if (req.query.code !== undefined && req.query.code !== null) {
+      params.product_code = Number(req.query.code);
+    }
+
+    const result = await axios.get(
+      `${OPERATOR_URL}/api/operators/provider-games`,
+      {
+        params: params,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const data = result.data;
+    const provider_games = data.provider_games;
+
+    // Extract unique gameType values and add them to GameCategories table
+    const uniqueGameTypes = new Set<string>();
+    provider_games.forEach((game: any) => {
+      if (game.game_type && game.game_type.trim()) {
+        uniqueGameTypes.add(game.game_type);
+      }
+    });
+
+    // Add each unique gameType to GameCategories (no duplicates due to unique constraint)
+    let categoriesAdded = 0;
+    for (const gameType of uniqueGameTypes) {
+      try {
+        // Check if category already exists
+        const existingCategory = await prisma.gameCategory.findUnique({
+          where: { name: gameType },
+        });
+
+        if (!existingCategory) {
+          // Only create if it doesn't exist
+          await prisma.gameCategory.create({
+            data: { name: gameType },
+          });
+          categoriesAdded++;
+        }
+      } catch (error: any) {
+        // Handle any errors (e.g., unique constraint violation)
+        if (error.code === 'P2002') {
+          // Category already exists, skip
+          console.log(`Category "${gameType}" already exists, skipping`);
+        } else {
+          console.error(`Error adding category ${gameType}:`, error);
+        }
+      }
+    }
+    console.log(`Categories processed: ${categoriesAdded} new, ${uniqueGameTypes.size - categoriesAdded} existing`);
+
+    const gameTypeToCategory: Record<string, number> = {
+      LIVE_CASINO: 2,
+      SLOT: 3,
+      POKER: 4,
+      OTHER: 5,
+      FISHING: 6,
+      SPORT_BOOK: 7,
+    };
+
+    const gamesData = provider_games.map((d: any) => {
+      return {
+        gameCode: d.game_code,
+        gameName: d.game_name,
+        gameType: d.game_type,
+        imageUrl: d.image_url,
+        productId: d.product_id,
+        productCode: d.product_code,
+        supportCurrency: d.support_currency,
+        status: d.status,
+        allowFreeRound: d.allow_free_round,
+        langName: d.lang_name,
+        langIcon: d.lang_icon,
+        enabled: true,
+        category: gameTypeToCategory[d.game_type],
+      };
+    });
+
+    // Insert games without Prisma using existing admin helper
+    let inserted = 0;
+    for (const g of gamesData) {
+      try {
+        await addGame(g);
+        inserted++;
+      } catch (e) {
+        // likely duplicate or constraint; skip
+      }
+    }
+    console.log(`✅ [STEP 2] Games processed: ${inserted} games inserted`);
+
+    return res.json({
+      success: true,
+      data: result.data,
+      inserted: inserted,
+      productsProcessed: productsProcessed,
+      message: "Products and games fetched and saved successfully",
+    });
+  } catch (err) {
+    console.error("❌ Request failed:", err.response?.data || err.message);
+    return res.status(500).json({
+      success: false,
+      error:
+        err.response?.data || err.message || "Failed to fetch provider games",
+    });
+  }
+});
+
 router.post("/launch-game", isAuthenticated, async (req, res) => {
   // Declare variables outside try block for error handling
   let memberAccount: string = "";
   let gameCode: string | number = "";
   let productCode: number = 0;
-  
+
   try {
     // Validate environment variables
     console.log("📋 [STEP 1] Validating environment variables...");
@@ -589,14 +812,14 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
       console.error("   - Status code:", err.response.status);
       console.error("   - Error message:", err.response.data.message || "N/A");
       console.error("   - Error code:", err.response.data.code || "N/A");
-      
+
       const errorData = err.response.data;
       const errorCode = errorData.code || err.response.status || 500;
       const errorMessage = errorData.message || "Failed to launch game";
-      
+
       // Enhanced error messages for common issues
       let userFriendlyMessage = errorMessage;
-      
+
       if (errorCode === 999) {
         console.error("🔍 [ERROR CODE 999] Analyzing error...");
         console.error("   - Error code 999 can indicate:");
@@ -605,10 +828,10 @@ router.post("/launch-game", isAuthenticated, async (req, res) => {
         console.error("     3. Provider internal error");
         console.error("     4. Operator configuration issue");
         console.error("     5. Game provider service unavailable");
-        
+
         // Check error message for specific clues
         const lowerMessage = errorMessage.toLowerCase();
-        
+
         if (
           lowerMessage.includes("record not found") ||
           lowerMessage.includes("not found") ||
@@ -682,7 +905,7 @@ The game provider returned error code 999: "${errorMessage}"
    - Error Message: "${errorMessage}"`;
         }
       }
-      
+
       console.error("   - User-friendly message prepared");
       console.log(
         "═══════════════════════════════════════════════════════════"

@@ -545,7 +545,27 @@ export async function updateGameSettings(data: {
     });
 }
 
-export const getAllProducts = async () => {
+export const getAllProducts = async (page?: number, limit?: number) => {
+    if (page !== undefined && limit !== undefined) {
+        const skip = (page - 1) * limit;
+        const [products, total] = await Promise.all([
+            prisma.product.findMany({
+                skip: skip,
+                take: limit,
+                orderBy: { createdAt: "desc" },
+            }),
+            prisma.product.count(),
+        ]);
+        return {
+            data: products,
+            meta: {
+                total,
+                page,
+                pageSize: limit,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
     return prisma.product.findMany({
         orderBy: { createdAt: "desc" },
     });
@@ -681,9 +701,7 @@ export async function processPayout(payoutId: number) {
 }
 
 export const getAllCategories = async () => {
-    return await prisma.gameCategory.findMany({
-        orderBy: { name: "asc" },
-    });
+    return await prisma.gameCategory.findMany();
 };
 
 export const getGames = async (options: {
@@ -713,6 +731,13 @@ export const getGames = async (options: {
         orderBy: { createdAt: "desc" },
     });
 
+    // Get all categories to map category IDs to names
+    const categories = await prisma.gameCategory.findMany();
+    const categoryMap = new Map();
+    categories.forEach((cat) => {
+        categoryMap.set(cat.id, cat.name);
+    });
+
     // Deduplicate by gameCode - keep only the first occurrence (most recent due to orderBy)
     const uniqueGamesMap = new Map();
     for (const game of allGames) {
@@ -721,8 +746,14 @@ export const getGames = async (options: {
         }
     }
 
-    // Convert map values back to array
-    const uniqueGames = Array.from(uniqueGamesMap.values());
+    // Convert map values back to array and enrich with category name
+    const uniqueGames = Array.from(uniqueGamesMap.values()).map((game) => {
+        const categoryName = game.category ? categoryMap.get(game.category) : null;
+        return {
+            ...game,
+            categoryName: categoryName || null, // Add category name to the game object
+        };
+    });
 
     // Apply pagination to unique games
     const total = uniqueGames.length;
