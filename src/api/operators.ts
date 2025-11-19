@@ -237,6 +237,9 @@ router.get("/provided-games", async (req, res) => {
       provider: game.provider || null, // Include provider from database
       extra_gameType: game.extra_gameType || game.gameType || null, // Include extra_gameType
       extra_provider: game.extra_provider || game.provider || null, // Include extra_provider
+      extra_gameName: game.extra_gameName || game.gameName || null,
+      extra_langName: game.extra_langName || game.langName || null,
+      extra_imageUrl: game.extra_imageUrl || game.imageUrl || null,
       category: game.categoryName || game.gameType || null, // Use category name if available, fallback to gameType
       category_id: game.category || null, // Include category ID for reference
       inManager: game.inManager || false, // Include inManager field
@@ -248,8 +251,9 @@ router.get("/provided-games", async (req, res) => {
     const pingCheckedAt = new Date().toISOString();
     const gamesWithPing = await Promise.all(
       allGames.map(async (game) => {
+        const imageToPing = game.extra_imageUrl || game.image_url;
         const { pingMs, pingStatus } = await measureGamePing(
-          game.image_url
+          imageToPing
         );
         return {
           ...game,
@@ -435,6 +439,9 @@ router.get("/provider-games", async (req, res) => {
         category: gameTypeToCategory[d.game_type],
         extra_gameType: d.game_type, // Set extra_gameType to same value as gameType
         extra_provider: providerValue, // Set extra_provider to same value as provider
+        extra_gameName: d.game_name,
+        extra_langName: d.lang_name,
+        extra_imageUrl: d.image_url,
       };
     });
 

@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import {
   createAdmin,
   login,
@@ -18,7 +18,7 @@ import {
   getGameSettings,
   updateGameSettings,
   getTransactions,
-  getAllProducts, 
+  getAllProducts,
   toggleProductStatus,
   getPayouts,
   processPayout,
@@ -33,40 +33,40 @@ import {
   updateCategory,
   deleteCategory,
   updateGame,
-  updateProduct, 
+  updateProduct,
   deleteProduct,
   createProduct,
   addGame,
-  backfillGameProviders
-} from '../db/admin';
+  backfillGameProviders,
+} from "../db/admin";
 import {
   getReferralConfig,
   updateReferralConfig,
   getUserReferralBonuses,
-  expireOldBonuses
-} from '../db/bonus';
-import { isAdmin } from '../utils/jwt';
-import fs from "fs"
-import path from "path"
-import prisma from '../db/prisma';
+  expireOldBonuses,
+} from "../db/bonus";
+import { isAdmin } from "../utils/jwt";
+import fs from "fs";
+import path from "path";
+import prisma from "../db/prisma";
 
 const router = express.Router();
 
 // Create new admin (requires existing admin authentication)
-router.post<{}, {}>('/create', isAdmin, async (req, res) => {
+router.post<{}, {}>("/create", isAdmin, async (req, res) => {
   const body = req.body;
 
   if (!body.email) {
     res.status(400).send({
-      message: 'email parameter required',
-      code: 400
+      message: "email parameter required",
+      code: 400,
     });
     return;
   }
   if (!body.password) {
     res.status(400).send({
-      message: 'password parameter required',
-      code: 400
+      message: "password parameter required",
+      code: 400,
     });
     return;
   }
@@ -75,31 +75,30 @@ router.post<{}, {}>('/create', isAdmin, async (req, res) => {
     const admin = await createAdmin(
       body.email,
       body.password,
-      body.role || 'admin',
-      body.status || 'active'
+      body.role || "admin",
+      body.status || "active"
     );
 
-    res.json({ code: 200, data: admin, message: 'Admin created successfully' });
+    res.json({ code: 200, data: admin, message: "Admin created successfully" });
   } catch (err) {
     res.status(400).json({ message: err.toString(), code: 400 });
   }
 });
 
-router.post<{}, {}>('/signin', async (req, res) => {
-
+router.post<{}, {}>("/signin", async (req, res) => {
   const body = req.body;
 
   if (!body.email) {
     res.status(400).send({
-      message: 'email parametr required',
-      code: 400
+      message: "email parametr required",
+      code: 400,
     });
     return;
   }
   if (!body.password) {
     res.status(400).send({
-      message: 'password parametr required',
-      code: 400
+      message: "password parametr required",
+      code: 400,
     });
     return;
   }
@@ -111,19 +110,17 @@ router.post<{}, {}>('/signin', async (req, res) => {
   } catch (err) {
     res.status(400).json({ message: err.toString() });
   }
-
 });
 
-router.post<{}, {}>('/change-password', isAdmin, async (req, res) => {
-
-  let id = req['token'].id;
+router.post<{}, {}>("/change-password", isAdmin, async (req, res) => {
+  let id = req["token"].id;
 
   const body = req.body;
 
   if (!body.password) {
     res.status(400).send({
       code: 400,
-      message: 'password parametr required',
+      message: "password parametr required",
     });
     return;
   }
@@ -131,26 +128,21 @@ router.post<{}, {}>('/change-password', isAdmin, async (req, res) => {
   if (!body.newPassword) {
     res.status(400).send({
       code: 400,
-      message: 'newPassword parametr required',
+      message: "newPassword parametr required",
     });
     return;
   }
-
 
   try {
     await changePassword(id, body.password, body.newPassword);
 
     res.json({ message: "Ok", code: 200 });
-
   } catch (err) {
     res.status(400).json({ message: err.toString(), code: 400 });
   }
-
 });
 
-router.get<{}, {}>('/stats', isAdmin, async (req, res) => {
-
-
+router.get<{}, {}>("/stats", isAdmin, async (req, res) => {
   try {
     const stats = await getPlatformStats();
 
@@ -158,27 +150,29 @@ router.get<{}, {}>('/stats', isAdmin, async (req, res) => {
   } catch (err) {
     res.status(400).json({ message: err.toString() });
   }
-
 });
 
-router.get<{}, {}>('/transactions', isAdmin, async (req, res) => {
-
+router.get<{}, {}>("/transactions", isAdmin, async (req, res) => {
   try {
-
     const { page = 1, limit = 50, search = null, type, currency } = req.query;
-    const stats = await getTransactions(Number(limit), Number(page), search ? String(search) : null,  type ? String(type) : null,  currency ? String(currency) : null );
+    const stats = await getTransactions(
+      Number(limit),
+      Number(page),
+      search ? String(search) : null,
+      type ? String(type) : null,
+      currency ? String(currency) : null
+    );
 
     res.json({ code: 200, data: stats });
   } catch (err) {
     res.status(400).json({ message: err.toString() });
   }
-
 });
 
 /* ================== USER MANAGEMENT ================== */
 
 // Basic info
-router.get('/users/:id', isAdmin, async (req, res) => {
+router.get("/users/:id", isAdmin, async (req, res) => {
   try {
     const user = await getUserBasicInfo(Number(req.params.id));
     res.json({ code: 200, data: user });
@@ -188,7 +182,7 @@ router.get('/users/:id', isAdmin, async (req, res) => {
 });
 
 // Addresses
-router.get('/users/:id/addresses', isAdmin, async (req, res) => {
+router.get("/users/:id/addresses", isAdmin, async (req, res) => {
   try {
     const addresses = await getUserAddresses(Number(req.params.id));
     res.json({ code: 200, data: addresses });
@@ -198,10 +192,14 @@ router.get('/users/:id/addresses', isAdmin, async (req, res) => {
 });
 
 // Game records
-router.get('/users/:id/games', isAdmin, async (req, res) => {
+router.get("/users/:id/games", isAdmin, async (req, res) => {
   const { page = 1, limit = 50 } = req.query;
   try {
-    const games = await getUserGameRecords(Number(req.params.id), Number(limit), Number(page));
+    const games = await getUserGameRecords(
+      Number(req.params.id),
+      Number(limit),
+      Number(page)
+    );
     res.json({ code: 200, data: games });
   } catch (err) {
     res.status(400).json({ message: err.toString(), code: 400 });
@@ -209,10 +207,14 @@ router.get('/users/:id/games', isAdmin, async (req, res) => {
 });
 
 // Deposits
-router.get('/users/:id/transactions', isAdmin, async (req, res) => {
+router.get("/users/:id/transactions", isAdmin, async (req, res) => {
   const { page = 1, limit = 50 } = req.query;
   try {
-    const deposits = await getUserTransactions(Number(req.params.id), Number(limit), Number(page));
+    const deposits = await getUserTransactions(
+      Number(req.params.id),
+      Number(limit),
+      Number(page)
+    );
     res.json({ code: 200, data: deposits });
   } catch (err) {
     res.status(400).json({ message: err.toString(), code: 400 });
@@ -220,7 +222,7 @@ router.get('/users/:id/transactions', isAdmin, async (req, res) => {
 });
 
 // Suspend user
-router.post('/users/:id/suspend', isAdmin, async (req, res) => {
+router.post("/users/:id/suspend", isAdmin, async (req, res) => {
   try {
     const result = await suspendUser(Number(req.params.id));
     res.json({ code: 200, data: result });
@@ -230,7 +232,7 @@ router.post('/users/:id/suspend', isAdmin, async (req, res) => {
 });
 
 // Update user info
-router.put('/users/:id', isAdmin, async (req, res) => {
+router.put("/users/:id", isAdmin, async (req, res) => {
   try {
     const result = await updateUserInfo(Number(req.params.id), req.body);
     res.json({ code: 200, data: result });
@@ -283,8 +285,12 @@ router.get("/logs", isAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 20;
-    const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
-    const adminId = req.query.adminId ? parseInt(req.query.adminId as string) : undefined;
+    const userId = req.query.userId
+      ? parseInt(req.query.userId as string)
+      : undefined;
+    const adminId = req.query.adminId
+      ? parseInt(req.query.adminId as string)
+      : undefined;
 
     const result = await getLogs({ page, pageSize, userId, adminId });
     res.json({ code: 200, ...result });
@@ -304,13 +310,14 @@ router.get("/hash-games-configs", isAdmin, async (req, res) => {
 
 router.post("/hash-games-configs/update/:id", isAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ code: 400, message: "Invalid id" });
+  if (isNaN(id))
+    return res.status(400).json({ code: 400, message: "Invalid id" });
 
   try {
     const data = await updateConfigById(id, req.body);
     res.json({ code: 200, data });
   } catch (err) {
-    console.log(err)
+    console.log(err);
     res.status(400).json({ code: 400, message: err.toString() });
   }
 });
@@ -339,13 +346,18 @@ router.get("/products", isAdmin, async (req, res) => {
   try {
     const page = req.query.page ? Number(req.query.page) : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    
+
     const result = await getAllProducts(page, limit);
-    
-    if (page !== undefined && limit !== undefined && typeof result === 'object' && 'data' in result) {
+
+    if (
+      page !== undefined &&
+      limit !== undefined &&
+      typeof result === "object" &&
+      "data" in result
+    ) {
       // Paginated response
-      res.json({ 
-        code: 200, 
+      res.json({
+        code: 200,
         data: result.data,
         pagination: result.meta,
       });
@@ -372,64 +384,64 @@ router.post("/products/:code/toggle", isAdmin, async (req, res) => {
 
 router.put("/products/:id", isAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10)
+    const id = parseInt(req.params.id, 10);
     const data = req.body;
 
     if (data.image?.startsWith("data:image")) {
       // extract mime type and base64 data
-      const matches = data.image.match(/^data:(image\/\w+);base64,(.+)$/)
-      if (!matches) throw new Error("Invalid base64 image")
+      const matches = data.image.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (!matches) throw new Error("Invalid base64 image");
 
-      const ext = matches[1].split("/")[1] // e.g., png, jpeg
-      const base64Data = matches[2]
-      const buffer = Buffer.from(base64Data, "base64")
-      const fileName = `product_${Date.now()}.${ext}`
-      const filePath = path.join("uploads", fileName)
+      const ext = matches[1].split("/")[1]; // e.g., png, jpeg
+      const base64Data = matches[2];
+      const buffer = Buffer.from(base64Data, "base64");
+      const fileName = `product_${Date.now()}.${ext}`;
+      const filePath = path.join("uploads", fileName);
 
-      fs.writeFileSync(filePath, buffer)
+      fs.writeFileSync(filePath, buffer);
       data.image = `/uploads/${fileName}`;
     }
 
-    const updated = await updateProduct(id, data)
-    res.json({ success: true, data: updated })
+    const updated = await updateProduct(id, data);
+    res.json({ success: true, data: updated });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message })
+    res.status(500).json({ success: false, error: err.message });
   }
-})
+});
 
 router.delete("/products/:id", isAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10)
-    const deleted = await deleteProduct(id)
-    res.json({ success: true, data: deleted })
+    const id = parseInt(req.params.id, 10);
+    const deleted = await deleteProduct(id);
+    res.json({ success: true, data: deleted });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message })
+    res.status(500).json({ success: false, error: err.message });
   }
-})
+});
 
 router.post("/products", isAdmin, async (req, res) => {
   try {
     const data = req.body;
     if (data.image?.startsWith("data:image")) {
       // extract mime type and base64 data
-      const matches = data.image.match(/^data:(image\/\w+);base64,(.+)$/)
-      if (!matches) throw new Error("Invalid base64 image")
+      const matches = data.image.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (!matches) throw new Error("Invalid base64 image");
 
-      const ext = matches[1].split("/")[1] // e.g., png, jpeg
-      const base64Data = matches[2]
-      const buffer = Buffer.from(base64Data, "base64")
-      const fileName = `product_${Date.now()}.${ext}`
-      const filePath = path.join("uploads", fileName)
+      const ext = matches[1].split("/")[1]; // e.g., png, jpeg
+      const base64Data = matches[2];
+      const buffer = Buffer.from(base64Data, "base64");
+      const fileName = `product_${Date.now()}.${ext}`;
+      const filePath = path.join("uploads", fileName);
 
-      fs.writeFileSync(filePath, buffer)
+      fs.writeFileSync(filePath, buffer);
       data.image = `/uploads/${fileName}`;
     }
-    const created = await createProduct(data)
-    res.json({ success: true, data: created })
+    const created = await createProduct(data);
+    res.json({ success: true, data: created });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message })
+    res.status(500).json({ success: false, error: err.message });
   }
-})
+});
 
 router.get("/payouts", async (req, res) => {
   try {
@@ -439,7 +451,13 @@ router.get("/payouts", async (req, res) => {
     const currency = req.query.currency as string | undefined;
     const search = req.query.search as string | undefined;
 
-    const result = await getPayouts({ page, pageSize, status, currency, search });
+    const result = await getPayouts({
+      page,
+      pageSize,
+      status,
+      currency,
+      search,
+    });
 
     res.json(result);
   } catch (err) {
@@ -474,12 +492,12 @@ router.get("/provider-games", async (req, res) => {
     const { categoryId, providerId, page, limit, enabled, search } = req.query;
 
     const result = await getGames({
-      categoryId: categoryId ? categoryId as string : undefined,
+      categoryId: categoryId ? (categoryId as string) : undefined,
       page: page ? parseInt(page as string, 10) : undefined,
       limit: limit ? parseInt(limit as string, 10) : undefined,
       enabled: enabled !== undefined ? enabled === "true" : undefined,
       search: search as string | undefined,
-      providerId: providerId ? providerId as string : undefined,
+      providerId: providerId ? (providerId as string) : undefined,
     });
 
     res.json(result);
@@ -491,40 +509,38 @@ router.get("/provider-games", async (req, res) => {
 
 router.put("/provider-games/:id/update", async (req, res) => {
   try {
-
-    const id = parseInt(req.params.id, 10)
-    let data = req.body
+    const id = parseInt(req.params.id, 10);
+    let data = req.body;
 
     if (data.imageUrl?.startsWith("data:image")) {
       // extract mime type and base64 data
-      const matches = data.imageUrl.match(/^data:(image\/\w+);base64,(.+)$/)
-      if (!matches) throw new Error("Invalid base64 image")
+      const matches = data.imageUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (!matches) throw new Error("Invalid base64 image");
 
-      const ext = matches[1].split("/")[1] // e.g., png, jpeg
-      const base64Data = matches[2]
-      const buffer = Buffer.from(base64Data, "base64")
-      const fileName = `game_${Date.now()}.${ext}`
-      const filePath = path.join("uploads", fileName)
+      const ext = matches[1].split("/")[1]; // e.g., png, jpeg
+      const base64Data = matches[2];
+      const buffer = Buffer.from(base64Data, "base64");
+      const fileName = `game_${Date.now()}.${ext}`;
+      const filePath = path.join("uploads", fileName);
 
-      fs.writeFileSync(filePath, buffer)
+      fs.writeFileSync(filePath, buffer);
       data.imageUrl = `/uploads/${fileName}`;
     }
 
-
     const game = await updateGame(id, data);
 
-    res.json({ success: true, data: game })
+    res.json({ success: true, data: game });
   } catch (err: any) {
-    console.error(err)
-    res.status(500).json({ success: false, error: err.message })
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
   }
-})
-
+});
 
 router.post("/provider-games/:id/toggle", async (req, res) => {
   try {
     const gameId = parseInt(req.params.id, 10);
-    if (isNaN(gameId)) return res.status(400).json({ error: "Invalid game ID" });
+    if (isNaN(gameId))
+      return res.status(400).json({ error: "Invalid game ID" });
 
     const updatedGame = await toggleGameEnabled(gameId);
     res.json({ message: "Game toggled successfully", game: updatedGame });
@@ -539,8 +555,10 @@ router.post("/provider-games/:id/category", async (req, res) => {
     const gameId = parseInt(req.params.id, 10);
     const { category } = req.body;
 
-    if (isNaN(gameId)) return res.status(400).json({ error: "Invalid game ID" });
-    if (typeof category !== "number") return res.status(400).json({ error: "Invalid category" });
+    if (isNaN(gameId))
+      return res.status(400).json({ error: "Invalid game ID" });
+    if (typeof category !== "number")
+      return res.status(400).json({ error: "Invalid category" });
 
     const updatedGame = await updateGameCategory(gameId, category);
     res.json({ message: "Category updated successfully", game: updatedGame });
@@ -553,10 +571,10 @@ router.post("/provider-games/:id/category", async (req, res) => {
 router.post("/provider-games/backfill-providers", isAdmin, async (req, res) => {
   try {
     const result = await backfillGameProviders();
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: "Provider backfill completed",
-      ...result 
+      ...result,
     });
   } catch (error: any) {
     console.error(error);
@@ -595,6 +613,8 @@ router.get("/games-in-manager", isAdmin, async (req, res) => {
     const categoryId = req.query.categoryId as string | undefined;
     const providerId = req.query.providerId as string | undefined;
     const status = req.query.status as string | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
 
     const result = await getGamesInManager({
       page,
@@ -603,6 +623,8 @@ router.get("/games-in-manager", isAdmin, async (req, res) => {
       categoryId,
       providerId,
       status,
+      startDate,
+      endDate,
     });
 
     // Transform games to match the format expected by frontend (same as provided-games endpoint)
@@ -622,15 +644,18 @@ router.get("/games-in-manager", isAdmin, async (req, res) => {
       provider: game.provider || null,
       extra_gameType: game.extra_gameType || game.gameType || null, // Include extra_gameType
       extra_provider: game.extra_provider || game.provider || null, // Include extra_provider
+      extra_gameName: game.extra_gameName || game.gameName || null,
+      extra_langName: game.extra_langName || game.langName || null,
+      extra_imageUrl: game.extra_imageUrl || game.imageUrl || null,
       category: game.categoryName || game.gameType || null,
       category_id: game.category || null,
       inManager: game.inManager || false,
     }));
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: transformedGames,
-      meta: result.meta
+      meta: result.meta,
     });
   } catch (error: any) {
     console.error(error);
@@ -646,7 +671,13 @@ router.get("/withdrawals", async (req, res) => {
     const currency = req.query.currency as string | undefined;
     const search = req.query.search as string | undefined;
 
-    const result = await getWithdrawals({ page, pageSize, status, currency, search });
+    const result = await getWithdrawals({
+      page,
+      pageSize,
+      status,
+      currency,
+      search,
+    });
 
     res.json(result);
   } catch (err) {
@@ -671,20 +702,28 @@ router.get("/game-categories", async (req, res) => {
     const categories = await getAllCategories();
     res.json({ success: true, data: categories });
   } catch (error) {
-    res.status(500).json({ success: false, error: "Failed to fetch categories" });
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch categories" });
   }
 });
 
 router.post("/game-categories/add", isAdmin, async (req, res) => {
   try {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ success: false, error: "Name required" });
+    if (!name)
+      return res.status(400).json({ success: false, error: "Name required" });
 
     const category = await createCategory(name);
     res.json({ success: true, data: category });
   } catch (error: any) {
     console.error("Error creating category:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to create category" });
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: error.message || "Failed to create category",
+      });
   }
 });
 
@@ -694,13 +733,19 @@ router.put("/game-categories/:id/update", isAdmin, async (req, res) => {
     const id = parseInt(req.params.id);
     const { name } = req.body;
 
-    if (!name) return res.status(400).json({ success: false, error: "Name required" });
+    if (!name)
+      return res.status(400).json({ success: false, error: "Name required" });
 
     const category = await updateCategory(id, name);
     res.json({ success: true, data: category });
   } catch (error: any) {
     console.error("Error updating category:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to update category" });
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: error.message || "Failed to update category",
+      });
   }
 });
 
@@ -713,7 +758,12 @@ router.delete("/game-categories/:id/delete", isAdmin, async (req, res) => {
     res.json({ success: true, message: "Category deleted" });
   } catch (error: any) {
     console.error("Error deleting category:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to delete category" });
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: error.message || "Failed to delete category",
+      });
   }
 });
 
@@ -731,10 +781,12 @@ router.post("/games/add", isAdmin, async (req, res) => {
       allowFreeRound,
       langName,
       langIcon,
-    } = req.body
+    } = req.body;
 
     if (!gameCode || !gameName || !productId || !productCode) {
-      return res.status(400).json({ success: false, error: "Missing required fields" })
+      return res
+        .status(400)
+        .json({ success: false, error: "Missing required fields" });
     }
 
     const game = await addGame({
@@ -749,12 +801,12 @@ router.post("/games/add", isAdmin, async (req, res) => {
       allowFreeRound,
       langName,
       langIcon,
-    })
+    });
 
-    res.json({ success: true, data: game })
+    res.json({ success: true, data: game });
   } catch (err: any) {
-    console.error(err)
-    res.status(500).json({ success: false, error: err.message })
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -782,7 +834,7 @@ router.post("/referral-config", isAdmin, async (req, res) => {
       signupBonus,
       maxBonusPerUser,
       bonusExpiryDays,
-      enabled
+      enabled,
     } = req.body;
 
     const config = await updateReferralConfig({
@@ -793,7 +845,7 @@ router.post("/referral-config", isAdmin, async (req, res) => {
       signupBonus,
       maxBonusPerUser,
       bonusExpiryDays,
-      enabled
+      enabled,
     });
 
     res.json({ code: 200, data: config });
@@ -821,7 +873,9 @@ router.get("/referral-bonuses", isAdmin, async (req, res) => {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 20;
     const status = req.query.status as string;
-    const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
+    const userId = req.query.userId
+      ? parseInt(req.query.userId as string)
+      : undefined;
 
     const skip = (page - 1) * pageSize;
 
@@ -834,13 +888,13 @@ router.get("/referral-bonuses", isAdmin, async (req, res) => {
         where,
         include: {
           user: { select: { id: true, email: true, name: true } },
-          fromUser: { select: { id: true, email: true, name: true } }
+          fromUser: { select: { id: true, email: true, name: true } },
         },
         orderBy: { createdAt: "desc" },
         skip,
         take: pageSize,
       }),
-      prisma.referralBonus.count({ where })
+      prisma.referralBonus.count({ where }),
     ]);
 
     res.json({
@@ -851,9 +905,9 @@ router.get("/referral-bonuses", isAdmin, async (req, res) => {
           page,
           pageSize,
           total,
-          totalPages: Math.ceil(total / pageSize)
-        }
-      }
+          totalPages: Math.ceil(total / pageSize),
+        },
+      },
     });
   } catch (err: any) {
     console.error(err);
@@ -881,22 +935,22 @@ router.get("/referral-stats", isAdmin, async (req, res) => {
       pendingBonuses,
       paidBonuses,
       expiredBonuses,
-      topReferrers
+      topReferrers,
     ] = await Promise.all([
       prisma.referralBonus.count(),
       prisma.referralBonus.aggregate({
-        _sum: { amount: true }
+        _sum: { amount: true },
       }),
       prisma.referralBonus.count({ where: { status: "pending" } }),
       prisma.referralBonus.count({ where: { status: "paid" } }),
       prisma.referralBonus.count({ where: { status: "expired" } }),
       prisma.referralBonus.groupBy({
-        by: ['userId'],
+        by: ["userId"],
         _sum: { amount: true },
         _count: { id: true },
-        orderBy: { _sum: { amount: 'desc' } },
-        take: 10
-      })
+        orderBy: { _sum: { amount: "desc" } },
+        take: 10,
+      }),
     ]);
 
     // Get user details for top referrers
@@ -904,11 +958,11 @@ router.get("/referral-stats", isAdmin, async (req, res) => {
       topReferrers.map(async (referrer) => {
         const user = await prisma.user.findUnique({
           where: { id: referrer.userId },
-          select: { id: true, email: true, name: true }
+          select: { id: true, email: true, name: true },
         });
         return {
           ...referrer,
-          user
+          user,
         };
       })
     );
@@ -921,8 +975,8 @@ router.get("/referral-stats", isAdmin, async (req, res) => {
         pendingBonuses,
         paidBonuses,
         expiredBonuses,
-        topReferrers: topReferrersWithDetails
-      }
+        topReferrers: topReferrersWithDetails,
+      },
     });
   } catch (err: any) {
     console.error(err);

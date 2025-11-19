@@ -317,6 +317,9 @@ model Game {
   provider        String?
   extra_gameType  String?
   extra_provider  String?
+  extra_gameName  String?
+  extra_langName  Json?
+  extra_imageUrl  String?
   coverImage      Json?
   isHot           Boolean  @default(false)
   isNew           Boolean  @default(false)

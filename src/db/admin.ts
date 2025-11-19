@@ -578,7 +578,7 @@ export const toggleProductStatus = async (productCode: number, enabled: boolean)
     });
 };
 
-export const updateProduct = (id: number, data: Partial<{
+export const updateProduct = async (id: number, data: Partial<{
     provider: string
     currency: string
     status: string
@@ -590,10 +590,39 @@ export const updateProduct = (id: number, data: Partial<{
     enabled: boolean,
     image: string
 }>) => {
-    return prisma.product.update({
+    const existingProduct = await prisma.product.findUnique({
+        where: { id },
+        select: { provider: true },
+    });
+
+    if (!existingProduct) {
+        throw new Error("Product not found");
+    }
+
+    const updatedProduct = await prisma.product.update({
         where: { id },
         data,
-    })
+    });
+
+    if (
+        data.provider &&
+        existingProduct.provider &&
+        existingProduct.provider.toLowerCase() !== data.provider.toLowerCase()
+    ) {
+        await prisma.game.updateMany({
+            where: {
+                extra_provider: {
+                    equals: existingProduct.provider,
+                    mode: "insensitive",
+                },
+            },
+            data: {
+                extra_provider: data.provider,
+            },
+        });
+    }
+
+    return updatedProduct;
 }
 
 export const createProduct = (data: {
@@ -820,39 +849,141 @@ export const getGamesInManager = async (options: {
     categoryId?: string;
     providerId?: string;
     status?: string;
+    startDate?: string;
+    endDate?: string;
 }) => {
-    const { page = 1, limit = 21, search, categoryId, providerId, status } = options;
+    const { page = 1, limit = 21, search, categoryId, providerId, status, startDate, endDate } = options;
     const skip = (page - 1) * limit;
-
     const where: any = {
-        inManager: true, // Only get games in manager
+        inManager: true,
     };
+    const andConditions: any[] = [];
 
-    // Apply status filter if provided
     if (status && status !== "All") {
         where.status = status.toUpperCase();
-    }
-
-    // Filter by category
-    if (categoryId && categoryId !== "all") {
-        where.category = parseInt(categoryId);
-    }
-
-    // Filter by provider
-    if (providerId && providerId !== "all") {
-        where.productCode = parseInt(providerId);
     }
 
     if (search) {
         where.gameName = { contains: search, mode: "insensitive" };
     }
 
-    // Get all categories to map category IDs to names
+    if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) {
+            const parsedStart = new Date(startDate);
+            if (!isNaN(parsedStart.getTime())) {
+                where.createdAt.gte = parsedStart;
+            }
+        }
+        if (endDate) {
+            const parsedEnd = new Date(endDate);
+            if (!isNaN(parsedEnd.getTime())) {
+                where.createdAt.lte = parsedEnd;
+            }
+        }
+        if (Object.keys(where.createdAt).length === 0) {
+            delete where.createdAt;
+        }
+    }
+
     const categories = await prisma.gameCategory.findMany();
     const categoryMap = new Map();
     categories.forEach((cat) => {
         categoryMap.set(cat.id, cat.name);
     });
+
+    if (categoryId && categoryId !== "all" && categoryId !== "All") {
+        const normalizedCategoryId = categoryId.trim();
+        const categoryConditions: any[] = [];
+
+        let resolvedCategoryId: number | undefined;
+        const parsedCategory = parseInt(normalizedCategoryId, 10);
+        if (!isNaN(parsedCategory)) {
+            resolvedCategoryId = parsedCategory;
+        }
+
+        const matchedCategory =
+            categories.find((cat) => cat.name?.toLowerCase() === normalizedCategoryId.toLowerCase()) ||
+            (resolvedCategoryId !== undefined
+                ? categories.find((cat) => cat.id === resolvedCategoryId)
+                : undefined);
+
+        if (resolvedCategoryId !== undefined) {
+            categoryConditions.push({ category: resolvedCategoryId });
+        } else if (matchedCategory) {
+            categoryConditions.push({ category: matchedCategory.id });
+        }
+
+        const categoryNameForExtra =
+            matchedCategory?.name || (normalizedCategoryId.length ? normalizedCategoryId : undefined);
+
+        if (categoryNameForExtra) {
+            categoryConditions.push({
+                extra_gameType: {
+                    equals: categoryNameForExtra,
+                    mode: "insensitive",
+                },
+            });
+        }
+
+        if (categoryConditions.length === 1) {
+            andConditions.push(categoryConditions[0]);
+        } else if (categoryConditions.length > 1) {
+            andConditions.push({ OR: categoryConditions });
+        }
+    }
+
+    const products = await prisma.product.findMany({
+        where: { enabled: true },
+    });
+    const productMap = new Map();
+    products.forEach((product) => {
+        productMap.set(product.code, product.provider);
+    });
+
+    if (providerId && providerId !== "all" && providerId !== "All") {
+        const normalizedProviderId = providerId.trim();
+        const providerConditions: any[] = [];
+        const parsedProvider = parseInt(normalizedProviderId, 10);
+
+        if (!isNaN(parsedProvider)) {
+            providerConditions.push({ productCode: parsedProvider });
+        } else {
+            const normalizedProvider = normalizedProviderId.toLowerCase();
+            const matchingCodes = products
+                .filter((product) => (product.provider || "").toLowerCase() === normalizedProvider)
+                .map((product) => product.code);
+
+            if (matchingCodes.length > 0) {
+                providerConditions.push({ productCode: { in: matchingCodes } });
+            }
+        }
+
+        if (normalizedProviderId.length > 0) {
+            providerConditions.push({
+                provider: {
+                    equals: normalizedProviderId,
+                    mode: "insensitive",
+                },
+            });
+            providerConditions.push({
+                extra_provider: {
+                    equals: normalizedProviderId,
+                    mode: "insensitive",
+                },
+            });
+        }
+
+        if (providerConditions.length === 1) {
+            andConditions.push(providerConditions[0]);
+        } else if (providerConditions.length > 1) {
+            andConditions.push({ OR: providerConditions });
+        }
+    }
+
+    if (andConditions.length > 0) {
+        where.AND = andConditions;
+    }
 
     // Get total count
     const total = await prisma.game.count({ where });
@@ -865,15 +996,6 @@ export const getGamesInManager = async (options: {
         orderBy: {
             updatedAt: 'desc',
         },
-    });
-
-    // Get all products to map product codes to providers
-    const products = await prisma.product.findMany({
-        where: { enabled: true },
-    });
-    const productMap = new Map();
-    products.forEach((product) => {
-        productMap.set(product.code, product.provider);
     });
 
     // Add metadata
@@ -964,6 +1086,20 @@ export const addGame = async (data) => {
             updateData.extra_provider = existingGame.provider;
             needsUpdate = true;
         }
+
+        // Ensure new extra fields mirror current values
+        if (existingGame.gameName && existingGame.extra_gameName !== existingGame.gameName) {
+            updateData.extra_gameName = existingGame.gameName;
+            needsUpdate = true;
+        }
+        if (existingGame.langName && JSON.stringify(existingGame.extra_langName) !== JSON.stringify(existingGame.langName)) {
+            updateData.extra_langName = existingGame.langName;
+            needsUpdate = true;
+        }
+        if (existingGame.imageUrl && existingGame.extra_imageUrl !== existingGame.imageUrl) {
+            updateData.extra_imageUrl = existingGame.imageUrl;
+            needsUpdate = true;
+        }
         
         if (needsUpdate) {
             const updatedGame = await prisma.game.update({
@@ -1006,6 +1142,9 @@ export const addGame = async (data) => {
             provider: provider, // Set provider from Product table
             extra_gameType: data.gameType, // Set extra_gameType to same value as gameType
             extra_provider: provider, // Set extra_provider to same value as provider
+            extra_gameName: data.gameName,
+            extra_langName: data.langName,
+            extra_imageUrl: data.imageUrl,
         }
     });
 
@@ -1051,37 +1190,55 @@ export const updateGameCategory = async (gameId: number, category: number) => {
 }
 
 export const updateGame = async (id: number, data: any)=> {
-  // If gameType or provider is being updated, also update the extra fields
-  const updateData = { ...data };
+  // Only update the fields that are explicitly provided
+  // Do NOT sync base fields (langName, provider, gameType) when extra_* fields are updated
+  const updateData: any = {};
   
-  // If gameType is being updated, sync extra_gameType
-  if (updateData.gameType !== undefined) {
-    updateData.extra_gameType = updateData.gameType;
+  // Only include fields that are explicitly provided in the data
+  // Base fields (langName, provider, gameType, gameName, imageUrl) are only updated if explicitly provided
+  if (data.langName !== undefined) {
+    updateData.langName = data.langName;
+  }
+  if (data.provider !== undefined) {
+    updateData.provider = data.provider;
+  }
+  if (data.gameType !== undefined) {
+    updateData.gameType = data.gameType;
+  }
+  if (data.gameName !== undefined) {
+    updateData.gameName = data.gameName;
+  }
+  if (data.imageUrl !== undefined) {
+    updateData.imageUrl = data.imageUrl;
   }
   
-  // If provider is being updated, sync extra_provider
-  if (updateData.provider !== undefined) {
-    updateData.extra_provider = updateData.provider;
+  // Extra fields can be updated independently without affecting base fields
+  if (data.extra_langName !== undefined) {
+    updateData.extra_langName = data.extra_langName;
+  }
+  if (data.extra_provider !== undefined) {
+    updateData.extra_provider = data.extra_provider;
+  }
+  if (data.extra_gameType !== undefined) {
+    updateData.extra_gameType = data.extra_gameType;
+  }
+  if (data.extra_gameName !== undefined) {
+    updateData.extra_gameName = data.extra_gameName;
+  }
+  if (data.extra_imageUrl !== undefined) {
+    updateData.extra_imageUrl = data.extra_imageUrl;
   }
   
-  // If only extra fields are being updated but not the original fields,
-  // we need to get the current game to sync them
-  if ((updateData.extra_gameType !== undefined && updateData.gameType === undefined) ||
-      (updateData.extra_provider !== undefined && updateData.provider === undefined)) {
-    const currentGame = await prisma.game.findUnique({
-      where: { id },
-      select: { gameType: true, provider: true }
-    });
-    
-    if (currentGame) {
-      // If extra_gameType is being set but gameType isn't, sync gameType to extra_gameType
-      if (updateData.extra_gameType !== undefined && updateData.gameType === undefined) {
-        updateData.gameType = updateData.extra_gameType;
-      }
-      // If extra_provider is being set but provider isn't, sync provider to extra_provider
-      if (updateData.extra_provider !== undefined && updateData.provider === undefined) {
-        updateData.provider = updateData.extra_provider;
-      }
+  // Include any other fields that might be passed
+  const allowedFields = [
+    'status', 'enabled', 'category', 'allowFreeRound', 'supportCurrency',
+    'isHot', 'isNew', 'isRecommended', 'onlinePlayers', 'launchParams',
+    'visibility', 'aggregator', 'inManager', 'coverImage', 'langIcon'
+  ];
+  
+  for (const field of allowedFields) {
+    if (data[field] !== undefined) {
+      updateData[field] = data[field];
     }
   }
   
@@ -1270,10 +1427,38 @@ export const createCategory = async (name: string) => {
 
 // Update category by ID
 export const updateCategory = async (id: number, name: string) => {
-    return prisma.gameCategory.update({
+    const existingCategory = await prisma.gameCategory.findUnique({
+        where: { id },
+        select: { name: true },
+    });
+
+    if (!existingCategory) {
+        throw new Error("Category not found");
+    }
+
+    const updatedCategory = await prisma.gameCategory.update({
         where: { id },
         data: { name },
     });
+
+    if (
+        existingCategory.name &&
+        existingCategory.name.toLowerCase() !== name.toLowerCase()
+    ) {
+        await prisma.game.updateMany({
+            where: {
+                extra_gameType: {
+                    equals: existingCategory.name,
+                    mode: "insensitive",
+                },
+            },
+            data: {
+                extra_gameType: name,
+            },
+        });
+    }
+
+    return updatedCategory;
 };
 
 // Delete category by ID

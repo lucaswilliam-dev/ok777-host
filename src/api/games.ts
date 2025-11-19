@@ -6,7 +6,7 @@ import { BetNuiNui } from '../games/niuniu';
 import { BetBankerPlayer } from "../games/bankerPlayer";
 import { BetOddEven } from '../games/oddEven';
 import { readAllConfigs } from '../db/admin';
-import { getGamesByCategory, getAllCategories, getAllProducts } from '../db/games';
+import { getGamesByCategory, getAllCategories, getAllProducts, getGamesByExtraGameType } from '../db/games';
 
 const router = express.Router();
 
@@ -101,6 +101,38 @@ router.get("/hash-games-addresses", async (req, res) => {
         res.json({ code: 200, data });
     } catch (err) {
         res.status(400).json({ code: 400, message: err.toString() });
+    }
+});
+
+// Get games by extra_gameType (category name)
+router.get("/by-category", async (req, res) => {
+    try {
+        const extraGameType = req.query.extraGameType as string;
+        const page = req.query.page ? Number(req.query.page) : 1;
+        const limit = req.query.limit ? Number(req.query.limit) : 100;
+
+        if (!extraGameType) {
+            return res.status(400).json({ 
+                code: 400, 
+                message: "extraGameType parameter is required" 
+            });
+        }
+
+        const result = await getGamesByExtraGameType({
+            extraGameType,
+            page,
+            limit,
+        });
+
+        res.json({
+            code: 200,
+            message: 'Games fetched successfully',
+            data: result.data,
+            meta: result.meta,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ code: 500, message: "Internal server error" });
     }
 });
 

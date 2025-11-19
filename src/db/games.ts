@@ -17,6 +17,7 @@ export async function getGamesByCategory({
     SELECT *
     FROM "Games"
     WHERE "enabled" = true AND "status" = 'ACTIVATED'
+      AND "inManager" = true
       AND (
         "supportCurrency" = 'ALL'
         OR "supportCurrency" ~ '(^|,)USD(,|$)'
@@ -30,6 +31,7 @@ export async function getGamesByCategory({
     SELECT COUNT(*)::bigint as count
     FROM "Games"
     WHERE "enabled" = true
+      AND "inManager" = true
       AND (
         "supportCurrency" = 'ALL'
         OR "supportCurrency" ~ '(^|,)USD(,|$)'
@@ -61,4 +63,56 @@ export async function getAllProducts() {
     where: { enabled: true },
     orderBy: { createdAt: 'desc' },
   });
+}
+
+// Get games by extra_gameType (category name)
+export async function getGamesByExtraGameType({
+  extraGameType,
+  page = 1,
+  limit = 100,
+}: {
+  extraGameType: string;
+  page?: number;
+  limit?: number;
+}) {
+  const offset = (page - 1) * limit;
+
+  const games = await prisma.game.findMany({
+    where: {
+      enabled: true,
+      status: 'ACTIVATED',
+      inManager: true, // Only games added in game manager
+      extra_gameType: extraGameType,
+      OR: [
+        { supportCurrency: 'ALL' },
+        { supportCurrency: { contains: 'USD' } },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    skip: offset,
+  });
+
+  const total = await prisma.game.count({
+    where: {
+      enabled: true,
+      status: 'ACTIVATED',
+      inManager: true, // Only games added in game manager
+      extra_gameType: extraGameType,
+      OR: [
+        { supportCurrency: 'ALL' },
+        { supportCurrency: { contains: 'USD' } },
+      ],
+    },
+  });
+
+  return {
+    data: games,
+    meta: {
+      total,
+      page,
+      pageSize: limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 }
