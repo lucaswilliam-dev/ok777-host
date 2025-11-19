@@ -31,6 +31,7 @@ app.use((req, res, next) => {
 });
 
 // Serve uploads with proper headers
+
 // app.use(
 //   "/uploads",
 //   express.static(path.join(__dirname, "uploads"), {

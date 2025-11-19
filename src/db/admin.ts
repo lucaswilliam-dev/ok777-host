@@ -706,30 +706,53 @@ export const getAllCategories = async () => {
 
 export const getGames = async (options: {
     categoryId?: string;
+    categoryGameType?: string; // Category name to filter by gameType
     page?: number;
     limit?: number;
     enabled?: boolean;
     search?: string;
     providerId?: string;
+    providerProductCodes?: number[]; // Support filtering by multiple product codes
+    status?: string; // Filter by status: ACTIVATED, DEACTIVATED, or undefined for all
 }) => {
-    const { categoryId, page = 1, limit = 10, enabled, search , providerId} = options;
+    const { categoryId, categoryGameType, page = 1, limit = 10, enabled, search , providerId, providerProductCodes, status} = options;
 
     const skip = (page - 1) * limit;
 
-    const where: any = {
-        status: "ACTIVATED"
-    };
+    const where: any = {};
+    // Build where clause with filters for status, category, provider, and search
 
-    if (categoryId && categoryId != "all") where.category = parseInt(categoryId);
-    if (providerId && providerId != "all") where.productCode = parseInt(providerId);
-    if (enabled !== undefined) where.enabled = enabled;
+    // Apply status filter if provided
+    if (status && status !== "All") {
+        where.status = status.toUpperCase(); // ACTIVATED or DEACTIVATED
+    }
+
+    // Filter by category: support both category ID and gameType matching
+    if (categoryId && categoryId != "all") {
+        if (categoryGameType) {
+            // Filter by category ID OR gameType matching category name
+            // This handles cases where games have hardcoded category IDs but category name matches gameType
+            // Prisma will AND this OR condition with other where conditions
+            where.OR = [
+                { category: parseInt(categoryId) },
+                { gameType: { equals: categoryGameType, mode: 'insensitive' } }
+            ];
+        } else {
+            // Only filter by category ID
+            where.category = parseInt(categoryId);
+        }
+    }
+    
+    // Filter by provider: support both single productCode (providerId) and multiple productCodes (providerProductCodes)
+    if (providerProductCodes && providerProductCodes.length > 0) {
+        // Filter by multiple product codes (for providers with multiple product codes)
+        where.productCode = { in: providerProductCodes };
+    } else if (providerId && providerId != "all") {
+        // Legacy support: filter by single product code
+        where.productCode = parseInt(providerId);
+    }
+    
     if (search) where.gameName = { contains: search, mode: "insensitive" };
-
-    // First, get all games and deduplicate by gameCode (keep the most recent one)
-    const allGames = await prisma.game.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-    });
 
     // Get all categories to map category IDs to names
     const categories = await prisma.gameCategory.findMany();
@@ -738,29 +761,43 @@ export const getGames = async (options: {
         categoryMap.set(cat.id, cat.name);
     });
 
-    // Deduplicate by gameCode - keep only the first occurrence (most recent due to orderBy)
-    const uniqueGamesMap = new Map();
-    for (const game of allGames) {
-        if (!uniqueGamesMap.has(game.gameCode)) {
-            uniqueGamesMap.set(game.gameCode, game);
-        }
-    }
+    // Get total count of filtered games
+    const total = await prisma.game.count({ where });
 
-    // Convert map values back to array and enrich with category name
-    const uniqueGames = Array.from(uniqueGamesMap.values()).map((game) => {
+    // Fetch filtered games with pagination from database
+    const filteredGames = await prisma.game.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: {
+            updatedAt: 'desc', // Order by most recently updated
+        },
+    });
+
+    // Get all products to map product codes to providers (for fallback only)
+    const products = await prisma.product.findMany({
+        where: { enabled: true },
+    });
+    const productMap = new Map();
+    products.forEach((product) => {
+        productMap.set(product.code, product.provider);
+    });
+
+    // Add metadata (category name) to filtered games
+    // Use provider from game table directly, with Product table as fallback for legacy games
+    const gamesWithMetadata = filteredGames.map((game) => {
         const categoryName = game.category ? categoryMap.get(game.category) : null;
+        // Use provider from game table, fallback to Product table lookup if not set (for legacy games)
+        const provider = game.provider || (game.productCode ? productMap.get(game.productCode) : null) || null;
         return {
             ...game,
             categoryName: categoryName || null, // Add category name to the game object
+            provider: provider, // Use provider from game table (with Product table as fallback)
         };
     });
 
-    // Apply pagination to unique games
-    const total = uniqueGames.length;
-    const paginatedGames = uniqueGames.slice(skip, skip + limit);
-
     return {
-        data: paginatedGames,
+        data: gamesWithMetadata,
         meta: {
             total,
             page,
@@ -774,6 +811,91 @@ export const getAllGames = async () => {
 
     return prisma.game.findMany({});
 
+}
+
+export const getGamesInManager = async (options: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    categoryId?: string;
+    providerId?: string;
+    status?: string;
+}) => {
+    const { page = 1, limit = 21, search, categoryId, providerId, status } = options;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+        inManager: true, // Only get games in manager
+    };
+
+    // Apply status filter if provided
+    if (status && status !== "All") {
+        where.status = status.toUpperCase();
+    }
+
+    // Filter by category
+    if (categoryId && categoryId !== "all") {
+        where.category = parseInt(categoryId);
+    }
+
+    // Filter by provider
+    if (providerId && providerId !== "all") {
+        where.productCode = parseInt(providerId);
+    }
+
+    if (search) {
+        where.gameName = { contains: search, mode: "insensitive" };
+    }
+
+    // Get all categories to map category IDs to names
+    const categories = await prisma.gameCategory.findMany();
+    const categoryMap = new Map();
+    categories.forEach((cat) => {
+        categoryMap.set(cat.id, cat.name);
+    });
+
+    // Get total count
+    const total = await prisma.game.count({ where });
+
+    // Fetch games with pagination
+    const games = await prisma.game.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: {
+            updatedAt: 'desc',
+        },
+    });
+
+    // Get all products to map product codes to providers
+    const products = await prisma.product.findMany({
+        where: { enabled: true },
+    });
+    const productMap = new Map();
+    products.forEach((product) => {
+        productMap.set(product.code, product.provider);
+    });
+
+    // Add metadata
+    const gamesWithMetadata = games.map((game) => {
+        const categoryName = game.category ? categoryMap.get(game.category) : null;
+        const provider = game.provider || (game.productCode ? productMap.get(game.productCode) : null) || null;
+        return {
+            ...game,
+            categoryName: categoryName || null,
+            provider: provider,
+        };
+    });
+
+    return {
+        data: gamesWithMetadata,
+        meta: {
+            total,
+            page,
+            pageSize: limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
 }
 
 export const savedGamesBulk = async (games: Array<any>) => {
@@ -813,9 +935,57 @@ export const addGame = async (data) => {
         where: { gameCode: data.gameCode }
     });
 
-    // If game already exists, skip insertion
+    // If game already exists, update provider and extra fields if missing
     if (existingGame) {
+        const updateData: any = {};
+        let needsUpdate = false;
+        
+        // If provider is missing, try to get it from Product table
+        if (!existingGame.provider && data.productCode) {
+            const product = await prisma.product.findUnique({
+                where: { code: data.productCode },
+                select: { provider: true },
+            });
+            if (product) {
+                updateData.provider = product.provider;
+                updateData.extra_provider = product.provider;
+                needsUpdate = true;
+            }
+        }
+        
+        // Sync extra_gameType with gameType if they don't match
+        if (existingGame.gameType && existingGame.extra_gameType !== existingGame.gameType) {
+            updateData.extra_gameType = existingGame.gameType;
+            needsUpdate = true;
+        }
+        
+        // Sync extra_provider with provider if they don't match
+        if (existingGame.provider && existingGame.extra_provider !== existingGame.provider) {
+            updateData.extra_provider = existingGame.provider;
+            needsUpdate = true;
+        }
+        
+        if (needsUpdate) {
+            const updatedGame = await prisma.game.update({
+                where: { id: existingGame.id },
+                data: updateData,
+            });
+            return updatedGame;
+        }
+        
         return existingGame;
+    }
+
+    // Look up provider from Product table using productCode
+    let provider: string | undefined = undefined;
+    if (data.productCode) {
+        const product = await prisma.product.findUnique({
+            where: { code: data.productCode },
+            select: { provider: true },
+        });
+        if (product) {
+            provider = product.provider;
+        }
     }
 
     // Only create if game doesn't exist
@@ -832,7 +1002,10 @@ export const addGame = async (data) => {
             allowFreeRound: data.allowFreeRound,
             langName: data.langName,
             langIcon: data.langIcon,
-            category: data.category || 1
+            category: data.category || 1,
+            provider: provider, // Set provider from Product table
+            extra_gameType: data.gameType, // Set extra_gameType to same value as gameType
+            extra_provider: provider, // Set extra_provider to same value as provider
         }
     });
 
@@ -878,10 +1051,112 @@ export const updateGameCategory = async (gameId: number, category: number) => {
 }
 
 export const updateGame = async (id: number, data: any)=> {
+  // If gameType or provider is being updated, also update the extra fields
+  const updateData = { ...data };
+  
+  // If gameType is being updated, sync extra_gameType
+  if (updateData.gameType !== undefined) {
+    updateData.extra_gameType = updateData.gameType;
+  }
+  
+  // If provider is being updated, sync extra_provider
+  if (updateData.provider !== undefined) {
+    updateData.extra_provider = updateData.provider;
+  }
+  
+  // If only extra fields are being updated but not the original fields,
+  // we need to get the current game to sync them
+  if ((updateData.extra_gameType !== undefined && updateData.gameType === undefined) ||
+      (updateData.extra_provider !== undefined && updateData.provider === undefined)) {
+    const currentGame = await prisma.game.findUnique({
+      where: { id },
+      select: { gameType: true, provider: true }
+    });
+    
+    if (currentGame) {
+      // If extra_gameType is being set but gameType isn't, sync gameType to extra_gameType
+      if (updateData.extra_gameType !== undefined && updateData.gameType === undefined) {
+        updateData.gameType = updateData.extra_gameType;
+      }
+      // If extra_provider is being set but provider isn't, sync provider to extra_provider
+      if (updateData.extra_provider !== undefined && updateData.provider === undefined) {
+        updateData.provider = updateData.extra_provider;
+      }
+    }
+  }
+  
   return await prisma.game.update({
     where: { id },
-    data,
+    data: updateData,
   });
+}
+
+/**
+ * Backfill provider field for games that don't have it set
+ * This function looks up the provider from the Product table using productCode
+ * and updates the game's provider field
+ */
+export const backfillGameProviders = async () => {
+    // Find all games without a provider
+    const gamesWithoutProvider = await prisma.game.findMany({
+        where: {
+            OR: [
+                { provider: null },
+                { provider: "" },
+            ],
+        },
+        select: {
+            id: true,
+            productCode: true,
+        },
+    });
+
+    console.log(`Found ${gamesWithoutProvider.length} games without provider`);
+
+    let updated = 0;
+    let notFound = 0;
+
+    // Get all products to create a lookup map
+    const products = await prisma.product.findMany({
+        where: { enabled: true },
+        select: {
+            code: true,
+            provider: true,
+        },
+    });
+
+    const productMap = new Map();
+    products.forEach((product) => {
+        productMap.set(product.code, product.provider);
+    });
+
+    // Update each game with its provider
+    for (const game of gamesWithoutProvider) {
+        if (game.productCode) {
+            const provider = productMap.get(game.productCode);
+            if (provider) {
+                await prisma.game.update({
+                    where: { id: game.id },
+                    data: { provider },
+                });
+                updated++;
+            } else {
+                notFound++;
+                console.warn(`No product found for game ${game.id} with productCode ${game.productCode}`);
+            }
+        } else {
+            notFound++;
+            console.warn(`Game ${game.id} has no productCode`);
+        }
+    }
+
+    console.log(`Backfill complete: ${updated} games updated, ${notFound} games could not be updated`);
+
+    return {
+        total: gamesWithoutProvider.length,
+        updated,
+        notFound,
+    };
 }
 
 export const processWithdraw = async (id: number) => {

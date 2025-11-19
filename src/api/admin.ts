@@ -24,6 +24,7 @@ import {
   processPayout,
   getAllCategories,
   getGames,
+  getGamesInManager,
   toggleGameEnabled,
   updateGameCategory,
   getWithdrawals,
@@ -35,7 +36,8 @@ import {
   updateProduct, 
   deleteProduct,
   createProduct,
-  addGame
+  addGame,
+  backfillGameProviders
 } from '../db/admin';
 import {
   getReferralConfig,
@@ -548,6 +550,94 @@ router.post("/provider-games/:id/category", async (req, res) => {
   }
 });
 
+router.post("/provider-games/backfill-providers", isAdmin, async (req, res) => {
+  try {
+    const result = await backfillGameProviders();
+    res.json({ 
+      success: true, 
+      message: "Provider backfill completed",
+      ...result 
+    });
+  } catch (error: any) {
+    console.error(error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+// Update game inManager field
+router.post("/provider-games/:id/in-manager", isAdmin, async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.id, 10);
+    const { inManager } = req.body;
+
+    if (isNaN(gameId)) {
+      return res.status(400).json({ error: "Invalid game ID" });
+    }
+
+    if (typeof inManager !== "boolean") {
+      return res.status(400).json({ error: "inManager must be a boolean" });
+    }
+
+    const updatedGame = await updateGame(gameId, { inManager });
+    res.json({ success: true, data: updatedGame });
+  } catch (error: any) {
+    console.error(error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+// Get games in manager
+router.get("/games-in-manager", isAdmin, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 21;
+    const search = req.query.search as string | undefined;
+    const categoryId = req.query.categoryId as string | undefined;
+    const providerId = req.query.providerId as string | undefined;
+    const status = req.query.status as string | undefined;
+
+    const result = await getGamesInManager({
+      page,
+      limit,
+      search,
+      categoryId,
+      providerId,
+      status,
+    });
+
+    // Transform games to match the format expected by frontend (same as provided-games endpoint)
+    const transformedGames = result.data.map((game: any) => ({
+      id: game.id,
+      game_code: game.gameCode,
+      game_name: game.gameName,
+      game_type: game.gameType,
+      image_url: game.imageUrl,
+      product_id: game.productId,
+      product_code: game.productCode,
+      support_currency: game.supportCurrency,
+      status: game.status,
+      allow_free_round: game.allowFreeRound,
+      lang_name: game.langName,
+      lang_icon: game.langIcon,
+      provider: game.provider || null,
+      extra_gameType: game.extra_gameType || game.gameType || null, // Include extra_gameType
+      extra_provider: game.extra_provider || game.provider || null, // Include extra_provider
+      category: game.categoryName || game.gameType || null,
+      category_id: game.category || null,
+      inManager: game.inManager || false,
+    }));
+
+    res.json({ 
+      success: true, 
+      data: transformedGames,
+      meta: result.meta
+    });
+  } catch (error: any) {
+    console.error(error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
 router.get("/withdrawals", async (req, res) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
@@ -585,40 +675,45 @@ router.get("/game-categories", async (req, res) => {
   }
 });
 
-router.post("/game-categories/add", async (req, res) => {
+router.post("/game-categories/add", isAdmin, async (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({ success: false, error: "Name required" });
 
     const category = await createCategory(name);
     res.json({ success: true, data: category });
-  } catch (error) {
-    res.status(500).json({ success: false, error: "Failed to create category" });
+  } catch (error: any) {
+    console.error("Error creating category:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to create category" });
   }
 });
 
 // PUT update category
-router.put("/game-categories/:id/update", async (req, res) => {
+router.put("/game-categories/:id/update", isAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { name } = req.body;
 
+    if (!name) return res.status(400).json({ success: false, error: "Name required" });
+
     const category = await updateCategory(id, name);
     res.json({ success: true, data: category });
-  } catch (error) {
-    res.status(500).json({ success: false, error: "Failed to update category" });
+  } catch (error: any) {
+    console.error("Error updating category:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to update category" });
   }
 });
 
 // DELETE category
-router.delete("/game-categories/:id/delete", async (req, res) => {
+router.delete("/game-categories/:id/delete", isAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
     await deleteCategory(id);
     res.json({ success: true, message: "Category deleted" });
-  } catch (error) {
-    res.status(500).json({ success: false, error: "Failed to delete category" });
+  } catch (error: any) {
+    console.error("Error deleting category:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to delete category" });
   }
 });
 

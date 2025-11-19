@@ -315,6 +315,8 @@ model Game {
   category        Int?
   enabled         Boolean  @default(true)
   provider        String?
+  extra_gameType  String?
+  extra_provider  String?
   coverImage      Json?
   isHot           Boolean  @default(false)
   isNew           Boolean  @default(false)
@@ -323,6 +325,7 @@ model Game {
   launchParams    Json?
   visibility      Json?
   aggregator      String?
+  inManager       Boolean  @default(false)
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

@@ -25,6 +25,34 @@ const operator_lobby = "https://ok-777-admin-1.vercel.app";
 
 const router = express.Router();
 
+const PING_TIMEOUT_MS = 5000;
+
+const measureGamePing = async (
+  url?: string | null,
+  timeout: number = PING_TIMEOUT_MS
+): Promise<{ pingMs: number | null; pingStatus: "online" | "offline" }> => {
+  if (!url) {
+    return { pingMs: null, pingStatus: "offline" };
+  }
+
+  const start = Date.now();
+  try {
+    await axios.head(url, {
+      timeout,
+      validateStatus: () => true,
+    });
+    const pingMs = Date.now() - start;
+    return { pingMs, pingStatus: "online" };
+  } catch (error: any) {
+    if (error.code === "ECONNABORTED") {
+      console.warn(`Ping timeout for ${url}`);
+    } else {
+      console.warn(`Ping failed for ${url}:`, error.message || error);
+    }
+    return { pingMs: null, pingStatus: "offline" };
+  }
+};
+
 // Ensure JSON bodies are parsed when this router is mounted independently
 router.use(express.json());
 router.use(express.urlencoded({ extended: true }));
@@ -69,47 +97,111 @@ router.get("/provided-games", async (req, res) => {
   const search = req.query.search as string | undefined;
   const categoryName = req.query.category as string | undefined;
   const providerName = req.query.provider as string | undefined;
+  const statusFilter = req.query.status as string | undefined; // Status filter: ACTIVATED, DEACTIVATED, or All
 
   try {
-    // Map category name to category ID if provided
+    // Map category name to category ID and gameType if provided
     let categoryId: string | undefined = undefined;
+    let categoryGameType: string | undefined = undefined;
     if (categoryName && categoryName !== "All") {
-      // Map category names to IDs (based on gameTypeToCategory mapping)
-      const categoryNameToId: Record<string, string> = {
-        "Slot": "3",
-        "LiveCasino": "2",
-        "TableGames": "5", // Assuming TableGames maps to OTHER (5) or we need to check
-        "Poker": "4",
-        "Other": "5",
-        "Fishing": "6",
-        "Sport": "7",
-      };
-      categoryId = categoryNameToId[categoryName];
+      // Look up category by name from GameCategory table (case-insensitive)
+      // First try exact match, then try case-insensitive
+      let category = await prisma.gameCategory.findUnique({
+        where: {
+          name: categoryName,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+      
+      // If not found, try case-insensitive search
+      if (!category) {
+        const allCategories = await prisma.gameCategory.findMany();
+        category = allCategories.find(
+          (cat) => cat.name.toLowerCase() === categoryName.toLowerCase()
+        ) || undefined;
+      }
+      
+      if (category) {
+        categoryId = category.id.toString();
+        categoryGameType = category.name; // Use category name as gameType filter
+        console.log(`Found category "${categoryName}" with ID: ${categoryId}`);
+      } else {
+        console.warn(`Category "${categoryName}" not found in database`);
+        // Return empty result if category is specified but not found
+        return res.json({
+          data: {
+            provider_games: [],
+          },
+          pagination: {
+            total: 0,
+            page: page || 1,
+            limit: limit,
+            totalPages: 0,
+          },
+          lastUpdated: null,
+          pingCheckedAt: new Date().toISOString(),
+          source: "database",
+        });
+      }
     }
 
-    // Map provider name to product code if provided
-    let providerId: string | undefined = undefined;
+    // Map provider name to product code(s) if provided
+    let providerProductCodes: number[] | undefined = undefined;
     if (providerName && providerName !== "All") {
-      // Map provider names to product codes
-      const providerNameToCode: Record<string, string> = {
-        "ag": "1",
-        "allbet": "2",
-        "bbin": "3",
-        // Add more mappings as needed
-      };
-      providerId = providerNameToCode[providerName] || productCode?.toString();
+      // Look up product codes that match the provider name from Product table
+      const products = await prisma.product.findMany({
+        where: {
+          provider: providerName,
+          enabled: true,
+        },
+        select: {
+          code: true,
+        },
+      });
+      
+      // If we found products with this provider name, use all their codes
+      if (products.length > 0) {
+        providerProductCodes = products.map(p => p.code);
+        console.log(`Found ${products.length} product(s) for provider "${providerName}": ${providerProductCodes.join(', ')}`);
+      } else {
+        console.warn(`No products found for provider "${providerName}"`);
+        // Fallback: try to find by product code if providerName is a number
+        const codeNum = parseInt(providerName);
+        if (!isNaN(codeNum)) {
+          providerProductCodes = [codeNum];
+        }
+      }
     } else if (productCode) {
-      providerId = productCode.toString();
+      providerProductCodes = [productCode];
+    }
+
+    // Map status filter: "Active" -> "ACTIVATED", "DeActive" -> "DEACTIVATED", "All" -> undefined
+    let status: string | undefined = undefined;
+    if (statusFilter && statusFilter !== "All") {
+      if (statusFilter === "Active") {
+        status = "ACTIVATED";
+      } else if (statusFilter === "DeActive") {
+        status = "DEACTIVATED";
+      } else {
+        // If already in correct format (ACTIVATED/DEACTIVATED), use as-is
+        status = statusFilter.toUpperCase();
+      }
     }
 
     // Fetch games directly from database with pagination and filters
+    // Remove enabled filter to fetch ALL games unconditionally
     const result = await getGames({
       page: page,
       limit: limit,
-      providerId: providerId,
+      providerProductCodes: providerProductCodes, // Pass array of product codes
       categoryId: categoryId,
+      categoryGameType: categoryGameType, // Pass category name for gameType filtering
       search: search,
-      enabled: true, // Only fetch enabled games
+      status: status, // Pass status filter to backend
+      // No enabled filter - fetch all games
     });
 
     // Get the most recent updatedAt timestamp from all games
@@ -128,7 +220,9 @@ router.get("/provided-games", async (req, res) => {
     });
 
     // Transform database games to match provider format
+    // NO DEDUPLICATION - return ALL games as-is
     const transformedGames = result.data.map((game: any) => ({
+      id: game.id, // Include database game ID
       game_code: game.gameCode,
       game_name: game.gameName,
       game_type: game.gameType,
@@ -141,22 +235,33 @@ router.get("/provided-games", async (req, res) => {
       lang_name: game.langName,
       lang_icon: game.langIcon,
       provider: game.provider || null, // Include provider from database
+      extra_gameType: game.extra_gameType || game.gameType || null, // Include extra_gameType
+      extra_provider: game.extra_provider || game.provider || null, // Include extra_provider
       category: game.categoryName || game.gameType || null, // Use category name if available, fallback to gameType
       category_id: game.category || null, // Include category ID for reference
+      inManager: game.inManager || false, // Include inManager field
     }));
 
-    // Additional deduplication safety layer - remove any duplicates by game_code
-    const uniqueGamesMap = new Map();
-    for (const game of transformedGames) {
-      if (!uniqueGamesMap.has(game.game_code)) {
-        uniqueGamesMap.set(game.game_code, game);
-      }
-    }
-    const uniqueGames = Array.from(uniqueGamesMap.values());
+    // NO DEDUPLICATION - use all games as-is
+    const allGames = transformedGames;
+
+    const pingCheckedAt = new Date().toISOString();
+    const gamesWithPing = await Promise.all(
+      allGames.map(async (game) => {
+        const { pingMs, pingStatus } = await measureGamePing(
+          game.image_url
+        );
+        return {
+          ...game,
+          pingMs,
+          pingStatus,
+        };
+      })
+    );
 
     return res.json({
       data: {
-        provider_games: uniqueGames,
+        provider_games: gamesWithPing,
       },
       pagination: {
         total: result.meta.total,
@@ -165,6 +270,7 @@ router.get("/provided-games", async (req, res) => {
         totalPages: result.meta.totalPages,
       },
       lastUpdated: mostRecentGame?.updatedAt || null,
+      pingCheckedAt,
       source: "database",
     });
   } catch (err: any) {
@@ -302,7 +408,17 @@ router.get("/provider-games", async (req, res) => {
       SPORT_BOOK: 7,
     };
 
+    // Fetch products from database to get provider values
+    const dbProducts = await prisma.product.findMany({
+      select: { code: true, provider: true },
+    });
+    const productsMap = new Map();
+    dbProducts.forEach((p) => {
+      productsMap.set(p.code, p.provider);
+    });
+
     const gamesData = provider_games.map((d: any) => {
+      const providerValue = productsMap.get(d.product_code) || null;
       return {
         gameCode: d.game_code,
         gameName: d.game_name,
@@ -317,6 +433,8 @@ router.get("/provider-games", async (req, res) => {
         langIcon: d.lang_icon,
         enabled: true,
         category: gameTypeToCategory[d.game_type],
+        extra_gameType: d.game_type, // Set extra_gameType to same value as gameType
+        extra_provider: providerValue, // Set extra_provider to same value as provider
       };
     });
 

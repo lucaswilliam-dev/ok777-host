@@ -244,6 +244,8 @@ create table if not exists "Games" (
   category integer,
   enabled boolean not null default true,
   provider text,
+  extra_gameType text,
+  extra_provider text,
   coverImage jsonb,
   isHot boolean not null default false,
   isNew boolean not null default false,
@@ -252,6 +254,7 @@ create table if not exists "Games" (
   launchParams jsonb,
   visibility jsonb,
   aggregator text,
+  inManager boolean not null default false,
   createdAt timestamptz not null default now(),
   updatedAt timestamptz not null default now()
 );
