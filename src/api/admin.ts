@@ -1,4 +1,5 @@
 import express from "express";
+import multer from "multer";
 import {
   createAdmin,
   login,
@@ -38,6 +39,7 @@ import {
   createProduct,
   addGame,
   backfillGameProviders,
+  getGameFilterOptions,
 } from "../db/admin";
 import {
   getReferralConfig,
@@ -51,6 +53,35 @@ import path from "path";
 import prisma from "../db/prisma";
 
 const router = express.Router();
+
+const uploadsRoot = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsRoot)) {
+  fs.mkdirSync(uploadsRoot, { recursive: true });
+}
+
+const uploadStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadsRoot);
+  },
+  filename: (_req, file, cb) => {
+    const originalExt = path.extname(file.originalname) || ".png";
+    const safeExt = originalExt.split("?")[0];
+    cb(null, `game_${Date.now()}${safeExt}`);
+  },
+});
+
+const imageUpload = multer({
+  storage: uploadStorage,
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed"));
+    }
+    cb(null, true);
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+});
 
 // Create new admin (requires existing admin authentication)
 router.post<{}, {}>("/create", isAdmin, async (req, res) => {
@@ -83,6 +114,44 @@ router.post<{}, {}>("/create", isAdmin, async (req, res) => {
   } catch (err) {
     res.status(400).json({ message: err.toString(), code: 400 });
   }
+});
+
+router.post("/uploads/image", isAdmin, (req, res) => {
+  imageUpload.single("file")(req, res, (err: any) => {
+    if (err) {
+      console.error("Image upload failed:", err);
+      const statusCode = err.message === "Only image files are allowed" ? 400 : 500;
+      return res
+        .status(statusCode)
+        .json({ success: false, error: err.message || "Failed to upload image" });
+    }
+
+    const file = (req as any).file as {
+      filename: string;
+      mimetype: string;
+      size: number;
+      path: string;
+    } | undefined;
+    if (!file) {
+      return res
+        .status(400)
+        .json({ success: false, error: "No file provided" });
+    }
+
+    const relativePath = path.posix.join("/uploads", file.filename);
+    const absoluteUrl = `${req.protocol}://${req.get("host")}${relativePath}`;
+
+    return res.json({
+      success: true,
+      data: {
+        path: relativePath,
+        url: absoluteUrl,
+        filename: file.filename,
+        mimetype: file.mimetype,
+        size: file.size,
+      },
+    });
+  });
 });
 
 router.post<{}, {}>("/signin", async (req, res) => {
@@ -415,7 +484,9 @@ router.delete("/products/:id", isAdmin, async (req, res) => {
     const deleted = await deleteProduct(id);
     res.json({ success: true, data: deleted });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res
+      .status(err.statusCode || 500)
+      .json({ success: false, error: err.message });
   }
 });
 
@@ -758,12 +829,23 @@ router.delete("/game-categories/:id/delete", isAdmin, async (req, res) => {
     res.json({ success: true, message: "Category deleted" });
   } catch (error: any) {
     console.error("Error deleting category:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: error.message || "Failed to delete category",
-      });
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || "Failed to delete category",
+    });
+  }
+});
+
+router.get("/game-filter-options", isAdmin, async (_req, res) => {
+  try {
+    const data = await getGameFilterOptions();
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error("Error fetching game filter options:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch game filter options",
+    });
   }
 });
 

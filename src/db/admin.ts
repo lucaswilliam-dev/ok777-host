@@ -642,11 +642,70 @@ export const createProduct = (data: {
     })
 }
 
-export const deleteProduct = (id: number) => {
+export const deleteProduct = async (id: number) => {
+    const product = await prisma.product.findUnique({
+        where: { id },
+        select: { provider: true },
+    });
+
+    if (!product) {
+        throw new Error("Product not found");
+    }
+
+    if (product.provider) {
+        const linkedGames = await prisma.game.count({
+            where: {
+                extra_provider: {
+                    equals: product.provider,
+                    mode: "insensitive",
+                },
+            },
+        });
+
+        if (linkedGames > 0) {
+            const error: any = new Error(
+                `Cannot delete provider "${product.provider}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`
+            );
+            error.statusCode = 409;
+            throw error;
+        }
+    }
+
     return prisma.product.delete({
         where: { id },
     })
 }
+
+export const getGameFilterOptions = async () => {
+    const games = await prisma.game.findMany({
+        select: {
+            extra_provider: true,
+            provider: true,
+            extra_gameType: true,
+            gameType: true,
+        },
+    });
+
+    const providerSet = new Set<string>();
+    const categorySet = new Set<string>();
+
+    games.forEach((game) => {
+        const provider = (game.extra_provider || game.provider || "").trim();
+        if (provider) {
+            providerSet.add(provider);
+        }
+
+        const category = (game.extra_gameType || game.gameType || "").trim();
+        if (category) {
+            categorySet.add(category);
+        }
+    });
+
+    return {
+        providers: Array.from(providerSet).sort(),
+        categories: Array.from(categorySet).sort(),
+    };
+};
 
 export interface GetPayoutsParams {
     page?: number;
@@ -1463,6 +1522,34 @@ export const updateCategory = async (id: number, name: string) => {
 
 // Delete category by ID
 export const deleteCategory = async (id: number) => {
+    const category = await prisma.gameCategory.findUnique({
+        where: { id },
+        select: { name: true },
+    });
+
+    if (!category) {
+        throw new Error("Category not found");
+    }
+
+    if (category.name) {
+        const linkedGames = await prisma.game.count({
+            where: {
+                extra_gameType: {
+                    equals: category.name,
+                    mode: "insensitive",
+                },
+            },
+        });
+
+        if (linkedGames > 0) {
+            const error: any = new Error(
+                `Cannot delete category "${category.name}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`
+            );
+            error.statusCode = 409;
+            throw error;
+        }
+    }
+
     return prisma.gameCategory.delete({
         where: { id },
     });

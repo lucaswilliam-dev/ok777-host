@@ -251,7 +251,7 @@ router.get("/provided-games", async (req, res) => {
     const pingCheckedAt = new Date().toISOString();
     const gamesWithPing = await Promise.all(
       allGames.map(async (game) => {
-        const imageToPing = game.extra_imageUrl || game.image_url;
+        const imageToPing = game.image_url || game.extra_imageUrl;
         const { pingMs, pingStatus } = await measureGamePing(
           imageToPing
         );

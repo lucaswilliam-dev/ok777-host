@@ -111,7 +111,16 @@ router.get("/by-category", async (req, res) => {
         const page = req.query.page ? Number(req.query.page) : 1;
         const limit = req.query.limit ? Number(req.query.limit) : 100;
 
+        console.log('========================================');
+        console.log('[API /by-category] Request received');
+        console.log('Query parameters:', req.query);
+        console.log('extraGameType:', extraGameType);
+        console.log('page:', page);
+        console.log('limit:', limit);
+        console.log('========================================');
+
         if (!extraGameType) {
+            console.error('[API /by-category] ERROR: extraGameType parameter is missing!');
             return res.status(400).json({ 
                 code: 400, 
                 message: "extraGameType parameter is required" 
@@ -124,6 +133,12 @@ router.get("/by-category", async (req, res) => {
             limit,
         });
 
+        console.log('[API /by-category] Returning result:', {
+            gamesCount: result.data.length,
+            total: result.meta.total,
+            category: extraGameType
+        });
+
         res.json({
             code: 200,
             message: 'Games fetched successfully',
@@ -131,7 +146,7 @@ router.get("/by-category", async (req, res) => {
             meta: result.meta,
         });
     } catch (error) {
-        console.error(error);
+        console.error('[API /by-category] ERROR:', error);
         res.status(500).json({ code: 500, message: "Internal server error" });
     }
 });

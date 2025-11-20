@@ -61,7 +61,7 @@ export const getAllCategories = async () => {
 export async function getAllProducts() {
   return await prisma.product.findMany({
     where: { enabled: true },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
   });
 }
 
@@ -77,34 +77,62 @@ export async function getGamesByExtraGameType({
 }) {
   const offset = (page - 1) * limit;
 
+  console.log(
+    `[getGamesByExtraGameType] Searching for extra_gameType: "${extraGameType}"`
+  );
+
+  // Use case-insensitive matching for extra_gameType
+  // PostgreSQL supports case-insensitive matching with mode: 'insensitive'
+  // const games = await prisma.game.findMany({
+  //   where: {
+  //     AND: [
+  //       { enabled: true },
+  //       { status: "ACTIVATED" },
+  //       { inManager: true }, // Only games added in game manager
+  //       {
+  //         extra_gameType: {
+  //           equals: extraGameType,
+  //           mode: "insensitive", // Case-insensitive match
+  //         },
+  //       },
+  //       {
+  //         OR: [
+  //           { supportCurrency: "ALL" },
+  //           { supportCurrency: { contains: "USD" } },
+  //         ],
+  //       },
+  //     ],
+  //   },
+  //   orderBy: { createdAt: "desc" },
+  //   take: limit,
+  //   skip: offset,
+  // });
+
   const games = await prisma.game.findMany({
     where: {
-      enabled: true,
-      status: 'ACTIVATED',
-      inManager: true, // Only games added in game manager
       extra_gameType: extraGameType,
-      OR: [
-        { supportCurrency: 'ALL' },
-        { supportCurrency: { contains: 'USD' } },
-      ],
+      inManager: true,
+      status: "ACTIVATED",
+      enabled: true,
     },
-    orderBy: { createdAt: 'desc' },
-    take: limit,
-    skip: offset,
   });
+
+  console.log(
+    `[getGamesByExtraGameType] Found ${games.length} games for "${extraGameType}"`
+  );
 
   const total = await prisma.game.count({
     where: {
-      enabled: true,
-      status: 'ACTIVATED',
-      inManager: true, // Only games added in game manager
       extra_gameType: extraGameType,
-      OR: [
-        { supportCurrency: 'ALL' },
-        { supportCurrency: { contains: 'USD' } },
-      ],
+      inManager: true,
+      status: "ACTIVATED",
+      enabled: true,
     },
   });
+
+  console.log(
+    `[getGamesByExtraGameType] Total count: ${total} for "${extraGameType}"`
+  );
 
   return {
     data: games,
