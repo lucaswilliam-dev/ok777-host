@@ -707,6 +707,25 @@ export const getGameFilterOptions = async () => {
     };
 };
 
+export const deleteGamesByIds = async (ids: number[]) => {
+    if (!ids || ids.length === 0) {
+        return { count: 0 };
+    }
+
+    const uniqueIds = [...new Set(ids)].filter((id) => typeof id === "number" && !Number.isNaN(id));
+    if (uniqueIds.length === 0) {
+        return { count: 0 };
+    }
+
+    return prisma.game.deleteMany({
+        where: {
+            id: {
+                in: uniqueIds,
+            },
+        },
+    });
+};
+
 export interface GetPayoutsParams {
     page?: number;
     pageSize?: number;

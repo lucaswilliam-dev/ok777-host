@@ -11,6 +11,7 @@ import {
   savedGamesBulk,
   addGame,
   getGames,
+  deleteGamesByIds,
 } from "../db/admin";
 
 const axios = require("axios");
@@ -288,6 +289,70 @@ router.get("/provided-games", async (req, res) => {
       error: "Failed to fetch games from database",
       message: err.message || "Internal server error",
       code: err.code || "DATABASE_ERROR",
+    });
+  }
+});
+
+router.post("/remove-offline-games", isAdmin, async (req, res) => {
+  try {
+    const { gameIds } = req.body || {};
+    const ids: number[] = Array.isArray(gameIds)
+      ? gameIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+
+    if (!ids.length) {
+      return res
+        .status(400)
+        .json({ success: false, error: "No valid game IDs provided" });
+    }
+
+    const games = await prisma.game.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, imageUrl: true },
+    });
+
+    if (!games.length) {
+      return res.json({
+        success: true,
+        removed: 0,
+        offlineGameIds: [],
+        message: "No games found for provided IDs",
+      });
+    }
+
+    const offlineGameIds: number[] = [];
+
+    for (const game of games) {
+      const imageToPing = game.imageUrl;
+      const { pingMs } = await measureGamePing(imageToPing);
+      if (!pingMs || pingMs <= 0) {
+        offlineGameIds.push(game.id);
+      }
+    }
+
+    if (!offlineGameIds.length) {
+      return res.json({
+        success: true,
+        removed: 0,
+        offlineGameIds: [],
+        message: "All provided games responded successfully",
+      });
+    }
+
+    const deletionResult = await deleteGamesByIds(offlineGameIds);
+
+    return res.json({
+      success: true,
+      removed: deletionResult.count,
+      offlineGameIds,
+    });
+  } catch (error: any) {
+    console.error("Error removing offline games:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to remove offline games",
     });
   }
 });
