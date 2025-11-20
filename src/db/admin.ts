@@ -604,17 +604,20 @@ export const updateProduct = async (id: number, data: Partial<{
         data,
     });
 
+    // IMPORTANT: When product provider changes, update extra_provider field in Game table
+    // DO NOT update provider field - provider is the original value used by GameStore page
+    // Only extra_provider should be updated when product provider changes
     if (
         data.provider &&
         existingProduct.provider &&
         existingProduct.provider.toLowerCase() !== data.provider.toLowerCase()
     ) {
+        // Update extra_provider for games that reference this product by productCode
+        // Use the product code from the updated product
+        const productCode = updatedProduct.code;
         await prisma.game.updateMany({
             where: {
-                extra_provider: {
-                    equals: existingProduct.provider,
-                    mode: "insensitive",
-                },
+                productCode: productCode,
             },
             data: {
                 extra_provider: data.provider,
@@ -677,25 +680,42 @@ export const deleteProduct = async (id: number) => {
 }
 
 export const getGameFilterOptions = async () => {
+    // IMPORTANT: Game store must always use original values (provider, gameType)
+    // NOT the extra_* fields which are used for other purposes
     const games = await prisma.game.findMany({
         select: {
-            extra_provider: true,
             provider: true,
-            extra_gameType: true,
             gameType: true,
+            // Also get productCode to look up provider from Product table if needed
+            productCode: true,
         },
+    });
+
+    // Get products to map productCode to provider (fallback for games without provider set)
+    const products = await prisma.product.findMany({
+        where: { enabled: true },
+        select: {
+            code: true,
+            provider: true,
+        },
+    });
+    const productMap = new Map();
+    products.forEach((product) => {
+        productMap.set(product.code, product.provider);
     });
 
     const providerSet = new Set<string>();
     const categorySet = new Set<string>();
 
     games.forEach((game) => {
-        const provider = (game.extra_provider || game.provider || "").trim();
+        // Use provider from game table, fallback to Product table lookup
+        const provider = (game.provider || (game.productCode ? productMap.get(game.productCode) : null) || "").trim();
         if (provider) {
             providerSet.add(provider);
         }
 
-        const category = (game.extra_gameType || game.gameType || "").trim();
+        // Use gameType (original value), NOT extra_gameType
+        const category = (game.gameType || "").trim();
         if (category) {
             categorySet.add(category);
         }
@@ -819,10 +839,11 @@ export const getGames = async (options: {
     enabled?: boolean;
     search?: string;
     providerId?: string;
-    providerProductCodes?: number[]; // Support filtering by multiple product codes
+    providerName?: string; // Provider name to filter by Game.provider field directly
+    providerProductCodes?: number[]; // Legacy support: filter by product codes
     status?: string; // Filter by status: ACTIVATED, DEACTIVATED, or undefined for all
 }) => {
-    const { categoryId, categoryGameType, page = 1, limit = 10, enabled, search , providerId, providerProductCodes, status} = options;
+    const { categoryId, categoryGameType, page = 1, limit = 10, enabled, search , providerId, providerName, providerProductCodes, status} = options;
 
     const skip = (page - 1) * limit;
 
@@ -834,25 +855,25 @@ export const getGames = async (options: {
         where.status = status.toUpperCase(); // ACTIVATED or DEACTIVATED
     }
 
-    // Filter by category: support both category ID and gameType matching
-    if (categoryId && categoryId != "all") {
-        if (categoryGameType) {
-            // Filter by category ID OR gameType matching category name
-            // This handles cases where games have hardcoded category IDs but category name matches gameType
-            // Prisma will AND this OR condition with other where conditions
-            where.OR = [
-                { category: parseInt(categoryId) },
-                { gameType: { equals: categoryGameType, mode: 'insensitive' } }
-            ];
-        } else {
-            // Only filter by category ID
-            where.category = parseInt(categoryId);
-        }
+    // IMPORTANT: GameStore page filters ONLY on Game table fields (provider, gameType)
+    // NOT on Product or Category tables - all filtering must use Game table directly
+    
+    // Filter by category: use gameType field from Game table directly
+    if (categoryGameType && categoryGameType !== "All" && categoryGameType !== "all") {
+        // Filter by gameType matching category name (from Game table directly)
+        where.gameType = { equals: categoryGameType, mode: 'insensitive' };
+    } else if (categoryId && categoryId != "all") {
+        // Fallback: filter by category ID if categoryGameType not provided
+        where.category = parseInt(categoryId);
     }
     
-    // Filter by provider: support both single productCode (providerId) and multiple productCodes (providerProductCodes)
-    if (providerProductCodes && providerProductCodes.length > 0) {
-        // Filter by multiple product codes (for providers with multiple product codes)
+    // Filter by provider: use provider field from Game table directly
+    // NOT productCode - filter directly on Game.provider field
+    if (providerName && providerName !== "All" && providerName !== "all") {
+        // Filter by provider name directly from Game table
+        where.provider = { equals: providerName, mode: 'insensitive' };
+    } else if (providerProductCodes && providerProductCodes.length > 0) {
+        // Legacy support: filter by product codes (for backward compatibility)
         where.productCode = { in: providerProductCodes };
     } else if (providerId && providerId != "all") {
         // Legacy support: filter by single product code
@@ -1130,13 +1151,27 @@ export const getTempGames = async () => {
 }
 
 export const addGame = async (data) => {
-    // Check if game already exists by gameCode
+    // IMPORTANT: Never add the exact same game from a third-party vendor
+    // Check for exact duplicate: same gameCode AND same productCode
+    // This ensures we don't add the same game twice from the same provider
+    const whereClause: any = { gameCode: data.gameCode };
+    
+    // If productCode is provided, check for exact match (gameCode + productCode)
+    // This is the most reliable way to identify the exact same game
+    if (data.productCode) {
+        whereClause.productCode = data.productCode;
+    }
+    
     const existingGame = await prisma.game.findFirst({
-        where: { gameCode: data.gameCode }
+        where: whereClause
     });
 
-    // If game already exists, update provider and extra fields if missing
+    // If exact duplicate exists, return it without creating a new entry
     if (existingGame) {
+        // Log duplicate detection for monitoring
+        console.log(`⚠️ [DUPLICATE DETECTED] Game already exists - gameCode: ${data.gameCode}, productCode: ${data.productCode || 'N/A'}, skipping duplicate insertion`);
+        
+        // Update provider and extra fields if missing (but don't create duplicate)
         const updateData: any = {};
         let needsUpdate = false;
         
@@ -1202,7 +1237,21 @@ export const addGame = async (data) => {
         }
     }
 
-    // Only create if game doesn't exist
+    // Final safety check: Verify no exact duplicate exists before creating
+    // This prevents race conditions or edge cases where duplicate might slip through
+    const finalCheck = await prisma.game.findFirst({
+        where: {
+            gameCode: data.gameCode,
+            ...(data.productCode && { productCode: data.productCode })
+        }
+    });
+    
+    if (finalCheck) {
+        console.log(`⚠️ [DUPLICATE PREVENTED] Exact game already exists - gameCode: ${data.gameCode}, productCode: ${data.productCode || 'N/A'}, returning existing game`);
+        return finalCheck;
+    }
+
+    // Only create if game doesn't exist (verified by checks above)
     const game = await prisma.game.create({
         data: {
             gameCode: data.gameCode,
@@ -1497,14 +1546,14 @@ export async function getWithdrawals(params: GetPayoutsParams) {
 }
 
 // Create new category
-export const createCategory = async (name: string) => {
+export const createCategory = async (name: string, icon?: string) => {
     return prisma.gameCategory.create({
-        data: { name },
+        data: { name, icon: icon || null },
     });
 };
 
 // Update category by ID
-export const updateCategory = async (id: number, name: string) => {
+export const updateCategory = async (id: number, name: string, icon?: string) => {
     const existingCategory = await prisma.gameCategory.findUnique({
         where: { id },
         select: { name: true },
@@ -1514,21 +1563,39 @@ export const updateCategory = async (id: number, name: string) => {
         throw new Error("Category not found");
     }
 
+    const updateData: any = { name };
+    if (icon !== undefined) {
+        updateData.icon = icon || null;
+    }
+
     const updatedCategory = await prisma.gameCategory.update({
         where: { id },
-        data: { name },
+        data: updateData,
     });
 
+    // IMPORTANT: When category name changes, update extra_gameType field in Game table
+    // DO NOT update gameType field - gameType is the original value used by GameStore page
+    // Only extra_gameType should be updated when category name changes
     if (
         existingCategory.name &&
         existingCategory.name.toLowerCase() !== name.toLowerCase()
     ) {
+        // Update extra_gameType for ALL games linked to this category:
+        // 1. Games where extra_gameType matches the old category name
+        // 2. Games where category ID matches this category
         await prisma.game.updateMany({
             where: {
-                extra_gameType: {
-                    equals: existingCategory.name,
-                    mode: "insensitive",
-                },
+                OR: [
+                    {
+                        extra_gameType: {
+                            equals: existingCategory.name,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        category: id,
+                    },
+                ],
             },
             data: {
                 extra_gameType: name,

@@ -101,83 +101,19 @@ router.get("/provided-games", async (req, res) => {
   const statusFilter = req.query.status as string | undefined; // Status filter: ACTIVATED, DEACTIVATED, or All
 
   try {
-    // Map category name to category ID and gameType if provided
-    let categoryId: string | undefined = undefined;
+    // IMPORTANT: GameStore page filters ONLY on Game table fields (gameType, provider)
+    // Do NOT look up GameCategory table - use categoryName directly as gameType filter
+    // GameCategories table is completely unrelated to GameStore filtering
     let categoryGameType: string | undefined = undefined;
     if (categoryName && categoryName !== "All") {
-      // Look up category by name from GameCategory table (case-insensitive)
-      // First try exact match, then try case-insensitive
-      let category = await prisma.gameCategory.findUnique({
-        where: {
-          name: categoryName,
-        },
-        select: {
-          id: true,
-          name: true,
-        },
-      });
-      
-      // If not found, try case-insensitive search
-      if (!category) {
-        const allCategories = await prisma.gameCategory.findMany();
-        category = allCategories.find(
-          (cat) => cat.name.toLowerCase() === categoryName.toLowerCase()
-        ) || undefined;
-      }
-      
-      if (category) {
-        categoryId = category.id.toString();
-        categoryGameType = category.name; // Use category name as gameType filter
-        console.log(`Found category "${categoryName}" with ID: ${categoryId}`);
-      } else {
-        console.warn(`Category "${categoryName}" not found in database`);
-        // Return empty result if category is specified but not found
-        return res.json({
-          data: {
-            provider_games: [],
-          },
-          pagination: {
-            total: 0,
-            page: page || 1,
-            limit: limit,
-            totalPages: 0,
-          },
-          lastUpdated: null,
-          pingCheckedAt: new Date().toISOString(),
-          source: "database",
-        });
-      }
+      // Use categoryName directly as gameType filter value
+      // Filter will be applied directly on Game.gameType field
+      categoryGameType = categoryName;
     }
 
-    // Map provider name to product code(s) if provided
-    let providerProductCodes: number[] | undefined = undefined;
-    if (providerName && providerName !== "All") {
-      // Look up product codes that match the provider name from Product table
-      const products = await prisma.product.findMany({
-        where: {
-          provider: providerName,
-          enabled: true,
-        },
-        select: {
-          code: true,
-        },
-      });
-      
-      // If we found products with this provider name, use all their codes
-      if (products.length > 0) {
-        providerProductCodes = products.map(p => p.code);
-        console.log(`Found ${products.length} product(s) for provider "${providerName}": ${providerProductCodes.join(', ')}`);
-      } else {
-        console.warn(`No products found for provider "${providerName}"`);
-        // Fallback: try to find by product code if providerName is a number
-        const codeNum = parseInt(providerName);
-        if (!isNaN(codeNum)) {
-          providerProductCodes = [codeNum];
-        }
-      }
-    } else if (productCode) {
-      providerProductCodes = [productCode];
-    }
+    // IMPORTANT: GameStore page filters ONLY on Game table fields (provider, gameType)
+    // Pass providerName directly to getGames - it will filter by Game.provider field
+    // No need to look up product codes - filter directly on Game table
 
     // Map status filter: "Active" -> "ACTIVATED", "DeActive" -> "DEACTIVATED", "All" -> undefined
     let status: string | undefined = undefined;
@@ -193,16 +129,19 @@ router.get("/provided-games", async (req, res) => {
     }
 
     // Fetch games directly from database with pagination and filters
-    // Remove enabled filter to fetch ALL games unconditionally
+    // IMPORTANT: Filter by Game table fields directly (provider, gameType)
+    // NOT by Product or Category tables - GameCategories table is completely unrelated
     const result = await getGames({
       page: page,
       limit: limit,
-      providerProductCodes: providerProductCodes, // Pass array of product codes
-      categoryId: categoryId,
-      categoryGameType: categoryGameType, // Pass category name for gameType filtering
+      providerName: providerName, // Filter by Game.provider field directly
+      categoryGameType: categoryGameType, // Filter by Game.gameType field directly (no GameCategory lookup)
       search: search,
       status: status, // Pass status filter to backend
+      // Legacy support: only use productCode if explicitly provided
+      ...(productCode ? { providerProductCodes: [productCode] } : {}),
       // No enabled filter - fetch all games
+      // Do NOT pass categoryId - GameCategories table is unrelated
     });
 
     // Get the most recent updatedAt timestamp from all games
@@ -511,21 +450,28 @@ router.get("/provider-games", async (req, res) => {
     });
 
     // Insert games without Prisma using existing admin helper
-    let inserted = 0;
+    // IMPORTANT: Never add the exact same game - addGame() handles duplicate detection
+    // addGame() checks for exact duplicates (gameCode + productCode) and prevents insertion
+    let processed = 0;
+    let errors = 0;
     for (const g of gamesData) {
       try {
         await addGame(g);
-        inserted++;
-      } catch (e) {
-        // likely duplicate or constraint; skip
+        // addGame() will either create a new game or return existing one (duplicate)
+        // Duplicates are logged within addGame() and handled gracefully
+        processed++;
+      } catch (e: any) {
+        errors++;
+        // Log actual errors (duplicates are handled gracefully in addGame, not thrown)
+        console.error(`❌ [STEP 2] Error processing game ${g.gameCode} (productCode: ${g.productCode}):`, e.message);
       }
     }
-    console.log(`✅ [STEP 2] Games processed: ${inserted} games inserted`);
+    console.log(`✅ [STEP 2] Games processed: ${processed} games processed (new + existing), ${errors} errors`);
 
     return res.json({
       success: true,
       data: result.data,
-      inserted: inserted,
+      gamesProcessed: processed,
       productsProcessed: productsProcessed,
       message: "Products and games fetched and saved successfully",
     });

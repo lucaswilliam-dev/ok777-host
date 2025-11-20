@@ -193,6 +193,7 @@ create table if not exists "Product" (
 create table if not exists "GameCategories" (
   id serial primary key,
   name text not null unique,
+  icon text,
   createdAt timestamptz not null default now(),
   updatedAt timestamptz not null default now()
 );

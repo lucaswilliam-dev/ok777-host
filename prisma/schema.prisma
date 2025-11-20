@@ -260,6 +260,7 @@ model Product {
 model GameCategory {
   id        Int      @id @default(autoincrement())
   name      String   @unique
+  icon      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
    @@map("GameCategories")

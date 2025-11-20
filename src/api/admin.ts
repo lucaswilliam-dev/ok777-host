@@ -781,11 +781,11 @@ router.get("/game-categories", async (req, res) => {
 
 router.post("/game-categories/add", isAdmin, async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, icon } = req.body;
     if (!name)
       return res.status(400).json({ success: false, error: "Name required" });
 
-    const category = await createCategory(name);
+    const category = await createCategory(name, icon);
     res.json({ success: true, data: category });
   } catch (error: any) {
     console.error("Error creating category:", error);
@@ -802,12 +802,31 @@ router.post("/game-categories/add", isAdmin, async (req, res) => {
 router.put("/game-categories/:id/update", isAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name } = req.body;
+    const { name, icon } = req.body;
 
     if (!name)
       return res.status(400).json({ success: false, error: "Name required" });
 
-    const category = await updateCategory(id, name);
+    // Get existing category to check for old icon
+    const existingCategory = await prisma.gameCategory.findUnique({
+      where: { id },
+      select: { icon: true },
+    });
+
+    const category = await updateCategory(id, name, icon);
+
+    // Delete old icon file if it exists and is different from new one
+    if (existingCategory?.icon && existingCategory.icon !== icon && existingCategory.icon.startsWith("/uploads/")) {
+      const oldIconPath = path.join(process.cwd(), existingCategory.icon);
+      if (fs.existsSync(oldIconPath)) {
+        try {
+          fs.unlinkSync(oldIconPath);
+        } catch (err) {
+          console.error("Error deleting old icon file:", err);
+        }
+      }
+    }
+
     res.json({ success: true, data: category });
   } catch (error: any) {
     console.error("Error updating category:", error);
@@ -825,7 +844,26 @@ router.delete("/game-categories/:id/delete", isAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
+    // Get category to check for icon file before deletion
+    const category = await prisma.gameCategory.findUnique({
+      where: { id },
+      select: { icon: true },
+    });
+
     await deleteCategory(id);
+
+    // Delete icon file if it exists
+    if (category?.icon && category.icon.startsWith("/uploads/")) {
+      const iconPath = path.join(process.cwd(), category.icon);
+      if (fs.existsSync(iconPath)) {
+        try {
+          fs.unlinkSync(iconPath);
+        } catch (err) {
+          console.error("Error deleting icon file:", err);
+        }
+      }
+    }
+
     res.json({ success: true, message: "Category deleted" });
   } catch (error: any) {
     console.error("Error deleting category:", error);
