@@ -24,6 +24,7 @@ import {
   getPayouts,
   processPayout,
   getAllCategories,
+  getAllTags,
   getGames,
   getGamesInManager,
   toggleGameEnabled,
@@ -33,10 +34,15 @@ import {
   createCategory,
   updateCategory,
   deleteCategory,
+  createTag,
+  updateTag,
+  deleteTag,
+  getCategoryDeletionStatus,
   updateGame,
   updateProduct,
   deleteProduct,
   createProduct,
+  getProductDeletionStatus,
   addGame,
   backfillGameProviders,
   getGameFilterOptions,
@@ -51,6 +57,45 @@ import { isAdmin } from "../utils/jwt";
 import fs from "fs";
 import path from "path";
 import prisma from "../db/prisma";
+
+const parseTagIds = (tags: any): number[] => {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+  const unique = new Set<number>();
+  const normalized: number[] = [];
+  tags.forEach((value) => {
+    const parsed =
+      typeof value === "string" ? parseInt(value, 10) : Number(value);
+    if (!Number.isNaN(parsed)) {
+      const tagId = Math.trunc(parsed);
+      if (!unique.has(tagId)) {
+        unique.add(tagId);
+        normalized.push(tagId);
+      }
+    }
+  });
+  return normalized;
+};
+
+const parseNumericArrayParam = (input: any): number[] | undefined => {
+  if (input === undefined || input === null) return undefined;
+  const rawValues = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+    ? input.split(",")
+    : [input];
+  const normalized = rawValues
+    .map((value) =>
+      typeof value === "string" ? value.trim() : value
+    )
+    .filter((value) => value !== "" && value !== null && value !== undefined)
+    .map((value) =>
+      typeof value === "string" ? parseInt(value, 10) : Number(value)
+    )
+    .filter((value) => Number.isInteger(value) && !Number.isNaN(value));
+  return normalized.length ? normalized : undefined;
+};
 
 const router = express.Router();
 
@@ -478,6 +523,21 @@ router.put("/products/:id", isAdmin, async (req, res) => {
   }
 });
 
+router.get("/products/:id/delete-check", isAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const status = await getProductDeletionStatus(id);
+    res.json({ success: true, ...status });
+  } catch (err: any) {
+    res
+      .status(err.statusCode || 500)
+      .json({
+        success: false,
+        error: err.message || "Failed to check provider deletion status",
+      });
+  }
+});
+
 router.delete("/products/:id", isAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -583,6 +643,10 @@ router.put("/provider-games/:id/update", async (req, res) => {
     const id = parseInt(req.params.id, 10);
     let data = req.body;
 
+    if (data.tags !== undefined) {
+      data.tags = parseTagIds(data.tags);
+    }
+
     if (data.imageUrl?.startsWith("data:image")) {
       // extract mime type and base64 data
       const matches = data.imageUrl.match(/^data:(image\/\w+);base64,(.+)$/);
@@ -686,6 +750,8 @@ router.get("/games-in-manager", isAdmin, async (req, res) => {
     const status = req.query.status as string | undefined;
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
+    const tags = parseNumericArrayParam(req.query.tags);
+    const visibility = parseNumericArrayParam(req.query.visibility);
 
     const result = await getGamesInManager({
       page,
@@ -696,6 +762,8 @@ router.get("/games-in-manager", isAdmin, async (req, res) => {
       status,
       startDate,
       endDate,
+      tags,
+      visibility,
     });
 
     // Transform games to match the format expected by frontend (same as provided-games endpoint)
@@ -721,6 +789,10 @@ router.get("/games-in-manager", isAdmin, async (req, res) => {
       category: game.categoryName || game.gameType || null,
       category_id: game.category || null,
       inManager: game.inManager || false,
+      isHot: game.isHot || false,
+      isNew: game.isNew || false,
+      tags: Array.isArray(game.tags) ? game.tags : [],
+      visibility: game.visibility || null,
     }));
 
     res.json({
@@ -776,6 +848,30 @@ router.get("/game-categories", async (req, res) => {
     res
       .status(500)
       .json({ success: false, error: "Failed to fetch categories" });
+  }
+});
+
+router.get("/game-tags", async (_req, res) => {
+  try {
+    const tags = await getAllTags();
+    res.json({ success: true, data: tags });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch tags" });
+  }
+});
+
+router.get("/game-categories/:id/delete-check", isAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const status = await getCategoryDeletionStatus(id);
+    res.json({ success: true, ...status });
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || "Failed to check category deletion status",
+    });
   }
 });
 
@@ -874,6 +970,61 @@ router.delete("/game-categories/:id/delete", isAdmin, async (req, res) => {
   }
 });
 
+router.post("/game-tags/add", isAdmin, async (req, res) => {
+  try {
+    const { name, icon, state } = req.body;
+    if (!name) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Name required" });
+    }
+    const tag = await createTag(name, icon, state);
+    res.json({ success: true, data: tag });
+  } catch (error: any) {
+    console.error("Error creating tag:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to create tag",
+    });
+  }
+});
+
+router.put("/game-tags/:id/update", isAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { name, icon, state } = req.body;
+    if (!name) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Name required" });
+    }
+    const tag = await updateTag(id, name, icon, state);
+    res.json({ success: true, data: tag });
+  } catch (error: any) {
+    console.error("Error updating tag:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to update tag",
+    });
+  }
+});
+
+router.delete("/game-tags/:id/delete", isAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    await deleteTag(id);
+    res.json({ success: true, message: "Tag deleted" });
+  } catch (error: any) {
+    console.error("Error deleting tag:", error);
+    res
+      .status(error.statusCode || 500)
+      .json({
+        success: false,
+        error: error.message || "Failed to delete tag",
+      });
+  }
+});
+
 router.get("/game-filter-options", isAdmin, async (_req, res) => {
   try {
     const data = await getGameFilterOptions();
@@ -901,6 +1052,7 @@ router.post("/games/add", isAdmin, async (req, res) => {
       allowFreeRound,
       langName,
       langIcon,
+      tags,
     } = req.body;
 
     if (!gameCode || !gameName || !productId || !productCode) {
@@ -921,6 +1073,7 @@ router.post("/games/add", isAdmin, async (req, res) => {
       allowFreeRound,
       langName,
       langIcon,
+      tags: parseTagIds(tags),
     });
 
     res.json({ success: true, data: game });

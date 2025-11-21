@@ -266,6 +266,17 @@ model GameCategory {
    @@map("GameCategories")
 }
 
+model GameTag {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  icon      String   @default("HOT")
+  state     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("GameTags")
+}
+
 model ReferralBonus {
   id        Int      @id @default(autoincrement())
   userId    Int      // the inviter who earns the bonus
@@ -325,6 +336,7 @@ model Game {
   isHot           Boolean  @default(false)
   isNew           Boolean  @default(false)
   isRecommended   Boolean  @default(false)
+  tags            Json?    @default("[]")
   onlinePlayers   Int?
   launchParams    Json?
   visibility      Json?
@@ -358,6 +370,7 @@ model TempGame {
   isHot           Boolean  @default(false)
   isNew           Boolean  @default(false)
   isRecommended   Boolean  @default(false)
+  tags            Json?    @default("[]")
   onlinePlayers   Int?
   launchParams    Json?
   visibility      Json?

@@ -7,6 +7,26 @@ import { convert } from '../utils/exchange';
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
+const normalizeTagIds = (tags: any): number[] => {
+    if (!Array.isArray(tags)) {
+        return [];
+    }
+    const uniqueIds = new Set<number>();
+    const normalized: number[] = [];
+    for (const tag of tags) {
+        const parsed =
+            typeof tag === "string" ? parseInt(tag, 10) : Number(tag);
+        if (!Number.isNaN(parsed)) {
+            const tagId = Math.trunc(parsed);
+            if (!uniqueIds.has(tagId)) {
+                uniqueIds.add(tagId);
+                normalized.push(tagId);
+            }
+        }
+    }
+    return normalized;
+};
+
 
 export const createAdmin = async (email: string, password: string, role: string = 'admin', status: string = 'active') => {
     try {
@@ -645,18 +665,21 @@ export const createProduct = (data: {
     })
 }
 
-export const deleteProduct = async (id: number) => {
+export const getProductDeletionStatus = async (id: number) => {
     const product = await prisma.product.findUnique({
         where: { id },
         select: { provider: true },
     });
 
     if (!product) {
-        throw new Error("Product not found");
+        const error: any = new Error("Product not found");
+        error.statusCode = 404;
+        throw error;
     }
 
+    let linkedGames = 0;
     if (product.provider) {
-        const linkedGames = await prisma.game.count({
+        linkedGames = await prisma.game.count({
             where: {
                 extra_provider: {
                     equals: product.provider,
@@ -664,14 +687,26 @@ export const deleteProduct = async (id: number) => {
                 },
             },
         });
+    }
 
-        if (linkedGames > 0) {
-            const error: any = new Error(
-                `Cannot delete provider "${product.provider}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`
-            );
-            error.statusCode = 409;
-            throw error;
-        }
+    const deletable = linkedGames === 0;
+    return {
+        deletable,
+        linkedGames,
+        providerName: product.provider,
+        blockingReason: deletable
+            ? null
+            : `Cannot delete provider "${product.provider}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`,
+    };
+};
+
+export const deleteProduct = async (id: number) => {
+    const status = await getProductDeletionStatus(id);
+
+    if (!status.deletable) {
+        const error: any = new Error(status.blockingReason || "Cannot delete provider because it is used by games.");
+        error.statusCode = 409;
+        throw error;
     }
 
     return prisma.product.delete({
@@ -831,6 +866,51 @@ export const getAllCategories = async () => {
     return await prisma.gameCategory.findMany();
 };
 
+export const getAllTags = async () => {
+    return prisma.gameTag.findMany({
+        orderBy: {
+            createdAt: 'desc',
+        },
+    });
+};
+
+export const createTag = async (name: string, icon?: string, state?: boolean) => {
+    if (!name || !name.trim()) {
+        throw new Error("Name required");
+    }
+    const data: any = {
+        name: name.trim(),
+        icon: icon || "HOT",
+        state: state === undefined ? true : !!state,
+    };
+    return prisma.gameTag.create({ data });
+};
+
+export const updateTag = async (id: number, name: string, icon?: string, state?: boolean) => {
+    if (!name || !name.trim()) {
+        throw new Error("Name required");
+    }
+    const data: any = {
+        name: name.trim(),
+    };
+    if (icon !== undefined) {
+        data.icon = icon;
+    }
+    if (state !== undefined) {
+        data.state = !!state;
+    }
+    return prisma.gameTag.update({
+        where: { id },
+        data,
+    });
+};
+
+export const deleteTag = async (id: number) => {
+    return prisma.gameTag.delete({
+        where: { id },
+    });
+};
+
 export const getGames = async (options: {
     categoryId?: string;
     categoryGameType?: string; // Category name to filter by gameType
@@ -950,8 +1030,10 @@ export const getGamesInManager = async (options: {
     status?: string;
     startDate?: string;
     endDate?: string;
+    tags?: number[];
+    visibility?: number[];
 }) => {
-    const { page = 1, limit = 21, search, categoryId, providerId, status, startDate, endDate } = options;
+    const { page = 1, limit = 21, search, categoryId, providerId, status, startDate, endDate, tags, visibility } = options;
     const skip = (page - 1) * limit;
     const where: any = {
         inManager: true,
@@ -964,6 +1046,18 @@ export const getGamesInManager = async (options: {
 
     if (search) {
         where.gameName = { contains: search, mode: "insensitive" };
+    }
+
+    if (Array.isArray(tags) && tags.length > 0) {
+        where.tags = {
+            array_contains: tags,
+        };
+    }
+
+    if (Array.isArray(visibility) && visibility.length > 0) {
+        where.visibility = {
+            array_contains: visibility,
+        };
     }
 
     if (startDate || endDate) {
@@ -1155,6 +1249,7 @@ export const addGame = async (data) => {
     // Check for exact duplicate: same gameCode AND same productCode
     // This ensures we don't add the same game twice from the same provider
     const whereClause: any = { gameCode: data.gameCode };
+    const normalizedTags = normalizeTagIds(data.tags);
     
     // If productCode is provided, check for exact match (gameCode + productCode)
     // This is the most reliable way to identify the exact same game
@@ -1214,6 +1309,11 @@ export const addGame = async (data) => {
             needsUpdate = true;
         }
         
+        if (normalizedTags.length) {
+            updateData.tags = normalizedTags;
+            needsUpdate = true;
+        }
+
         if (needsUpdate) {
             const updatedGame = await prisma.game.update({
                 where: { id: existingGame.id },
@@ -1272,6 +1372,7 @@ export const addGame = async (data) => {
             extra_gameName: data.gameName,
             extra_langName: data.langName,
             extra_imageUrl: data.imageUrl,
+            tags: normalizedTags,
         }
     });
 
@@ -1354,6 +1455,10 @@ export const updateGame = async (id: number, data: any)=> {
   }
   if (data.extra_imageUrl !== undefined) {
     updateData.extra_imageUrl = data.extra_imageUrl;
+  }
+
+  if (data.tags !== undefined) {
+    updateData.tags = normalizeTagIds(data.tags);
   }
   
   // Include any other fields that might be passed
@@ -1607,18 +1712,21 @@ export const updateCategory = async (id: number, name: string, icon?: string) =>
 };
 
 // Delete category by ID
-export const deleteCategory = async (id: number) => {
+export const getCategoryDeletionStatus = async (id: number) => {
     const category = await prisma.gameCategory.findUnique({
         where: { id },
         select: { name: true },
     });
 
     if (!category) {
-        throw new Error("Category not found");
+        const error: any = new Error("Category not found");
+        error.statusCode = 404;
+        throw error;
     }
 
+    let linkedGames = 0;
     if (category.name) {
-        const linkedGames = await prisma.game.count({
+        linkedGames = await prisma.game.count({
             where: {
                 extra_gameType: {
                     equals: category.name,
@@ -1626,14 +1734,26 @@ export const deleteCategory = async (id: number) => {
                 },
             },
         });
+    }
 
-        if (linkedGames > 0) {
-            const error: any = new Error(
-                `Cannot delete category "${category.name}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`
-            );
-            error.statusCode = 409;
-            throw error;
-        }
+    const deletable = linkedGames === 0;
+    return {
+        deletable,
+        linkedGames,
+        categoryName: category.name,
+        blockingReason: deletable
+            ? null
+            : `Cannot delete category "${category.name}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`,
+    };
+};
+
+export const deleteCategory = async (id: number) => {
+    const status = await getCategoryDeletionStatus(id);
+
+    if (!status.deletable) {
+        const error: any = new Error(status.blockingReason || "Cannot delete category because it is used by games.");
+        error.statusCode = 409;
+        throw error;
     }
 
     return prisma.gameCategory.delete({
