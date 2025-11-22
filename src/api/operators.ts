@@ -174,13 +174,13 @@ router.get("/provided-games", async (req, res) => {
       allow_free_round: game.allowFreeRound,
       lang_name: game.langName,
       lang_icon: game.langIcon,
-      provider: game.provider || null, // Include provider from database
+      provider: game.provider || null, // Provider from Game table
       extra_gameType: game.extra_gameType || game.gameType || null, // Include extra_gameType
       extra_provider: game.extra_provider || game.provider || null, // Include extra_provider
       extra_gameName: game.extra_gameName || game.gameName || null,
       extra_langName: game.extra_langName || game.langName || null,
       extra_imageUrl: game.extra_imageUrl || game.imageUrl || null,
-      category: game.categoryName || game.gameType || null, // Use category name if available, fallback to gameType
+      category: game.gameType || null, // Category uses gameType from Game table (not categoryName)
       category_id: game.category || null, // Include category ID for reference
       inManager: game.inManager || false, // Include inManager field
     }));
