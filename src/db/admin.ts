@@ -678,7 +678,9 @@ export const getProductDeletionStatus = async (id: number) => {
     }
 
     let linkedGames = 0;
+    let linkedGamesInManager = 0;
     if (product.provider) {
+        // Count all games using this provider
         linkedGames = await prisma.game.count({
             where: {
                 extra_provider: {
@@ -687,16 +689,31 @@ export const getProductDeletionStatus = async (id: number) => {
                 },
             },
         });
+        
+        // Count games using this provider that are in manager (inManager = true)
+        linkedGamesInManager = await prisma.game.count({
+            where: {
+                extra_provider: {
+                    equals: product.provider,
+                    mode: "insensitive",
+                },
+                inManager: true,
+            },
+        });
     }
 
-    const deletable = linkedGames === 0;
+    // Provider can only be deleted if:
+    // 1. No games use it, OR
+    // 2. Games use it but none have inManager = true
+    const deletable = linkedGamesInManager === 0;
     return {
         deletable,
         linkedGames,
+        linkedGamesInManager,
         providerName: product.provider,
         blockingReason: deletable
             ? null
-            : `Cannot delete provider "${product.provider}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`,
+            : `Cannot delete provider "${product.provider}" because it is used by ${linkedGamesInManager} game${linkedGamesInManager === 1 ? "" : "s"} in the manager (inManager = true).`,
     };
 };
 
@@ -1458,7 +1475,36 @@ export const updateGame = async (id: number, data: any)=> {
   }
 
   if (data.tags !== undefined) {
-    updateData.tags = normalizeTagIds(data.tags);
+    const normalizedTagIds = normalizeTagIds(data.tags);
+    updateData.tags = normalizedTagIds;
+    
+    // Check if tags contain "HOT" or "NEW" and set isHot/isNew accordingly
+    // When tags are updated, isHot/isNew are automatically set based on tag presence
+    if (normalizedTagIds.length > 0) {
+      // Fetch tag names from database
+      const tags = await prisma.gameTag.findMany({
+        where: {
+          id: { in: normalizedTagIds }
+        },
+        select: {
+          id: true,
+          name: true
+        }
+      });
+      
+      // Check for HOT and NEW tags (case-insensitive)
+      const hasHotTag = tags.some(tag => tag.name.toUpperCase() === 'HOT');
+      const hasNewTag = tags.some(tag => tag.name.toUpperCase() === 'NEW');
+      
+      // Set isHot and isNew based on tag presence
+      // Tags control these fields when tags are updated
+      updateData.isHot = hasHotTag;
+      updateData.isNew = hasNewTag;
+    } else {
+      // If tags array is empty, set both to false
+      updateData.isHot = false;
+      updateData.isNew = false;
+    }
   }
   
   // Include any other fields that might be passed
@@ -1725,7 +1771,9 @@ export const getCategoryDeletionStatus = async (id: number) => {
     }
 
     let linkedGames = 0;
+    let linkedGamesInManager = 0;
     if (category.name) {
+        // Count all games using this category
         linkedGames = await prisma.game.count({
             where: {
                 extra_gameType: {
@@ -1734,16 +1782,31 @@ export const getCategoryDeletionStatus = async (id: number) => {
                 },
             },
         });
+        
+        // Count games using this category that are in manager (inManager = true)
+        linkedGamesInManager = await prisma.game.count({
+            where: {
+                extra_gameType: {
+                    equals: category.name,
+                    mode: "insensitive",
+                },
+                inManager: true,
+            },
+        });
     }
 
-    const deletable = linkedGames === 0;
+    // Category can only be deleted if:
+    // 1. No games use it, OR
+    // 2. Games use it but none have inManager = true
+    const deletable = linkedGamesInManager === 0;
     return {
         deletable,
         linkedGames,
+        linkedGamesInManager,
         categoryName: category.name,
         blockingReason: deletable
             ? null
-            : `Cannot delete category "${category.name}" because it is used by ${linkedGames} game${linkedGames === 1 ? "" : "s"}.`,
+            : `Cannot delete category "${category.name}" because it is used by ${linkedGamesInManager} game${linkedGamesInManager === 1 ? "" : "s"} in the manager (inManager = true).`,
     };
 };
 
