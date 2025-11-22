@@ -183,6 +183,8 @@ router.get("/provided-games", async (req, res) => {
       category: game.gameType || null, // Category uses gameType from Game table (not categoryName)
       category_id: game.category || null, // Include category ID for reference
       inManager: game.inManager || false, // Include inManager field
+      isNew: game.isNew || false, // Include isNew field
+      isHot: game.isHot || false, // Include isHot field
     }));
 
     // NO DEDUPLICATION - use all games as-is
