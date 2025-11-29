@@ -70,68 +70,49 @@ export async function getGamesByExtraGameType({
   extraGameType,
   page = 1,
   limit = 100,
+  visibility,
 }: {
   extraGameType: string;
   page?: number;
   limit?: number;
+  visibility?: number | null; // Language code for filtering (null = show all games)
 }) {
   const offset = (page - 1) * limit;
 
   console.log(
-    `[getGamesByExtraGameType] Searching for extra_gameType: "${extraGameType}"`
+    `[getGamesByExtraGameType] Searching for extra_gameType: "${extraGameType}", visibility: ${visibility}`
   );
 
-  // Use case-insensitive matching for extra_gameType
-  // PostgreSQL supports case-insensitive matching with mode: 'insensitive'
-  // const games = await prisma.game.findMany({
-  //   where: {
-  //     AND: [
-  //       { enabled: true },
-  //       { status: "ACTIVATED" },
-  //       { inManager: true }, // Only games added in game manager
-  //       {
-  //         extra_gameType: {
-  //           equals: extraGameType,
-  //           mode: "insensitive", // Case-insensitive match
-  //         },
-  //       },
-  //       {
-  //         OR: [
-  //           { supportCurrency: "ALL" },
-  //           { supportCurrency: { contains: "USD" } },
-  //         ],
-  //       },
-  //     ],
-  //   },
-  //   orderBy: { createdAt: "desc" },
-  //   take: limit,
-  //   skip: offset,
-  // });
+  // Build where clause
+  const where: any = {
+    extra_gameType: extraGameType,
+    inManager: true,
+    status: "ACTIVATED",
+    enabled: true,
+  };
+
+  // Filter by visibility if language code is provided (not null)
+  // If visibility is null, show all games (English = all games)
+  if (visibility !== null && visibility !== undefined) {
+    where.visibility = {
+      array_contains: [visibility],
+    };
+  }
 
   const games = await prisma.game.findMany({
-    where: {
-      extra_gameType: extraGameType,
-      inManager: true,
-      status: "ACTIVATED",
-      enabled: true,
-    },
+    where,
   });
 
   console.log(
-    `[getGamesByExtraGameType] Found ${games.length} games for "${extraGameType}"`
+    `[getGamesByExtraGameType] Found ${games.length} games for "${extraGameType}" with visibility ${visibility}`
   );
 
   const total = await prisma.game.count({
-    where: {
-      extra_gameType: extraGameType,
-      inManager: true,
-      status: "ACTIVATED",
-      enabled: true,
-    },
+    where,
   });
 
   console.log(
-    `[getGamesByExtraGameType] Total count: ${total} for "${extraGameType}"`
+    `[getGamesByExtraGameType] Total count: ${total} for "${extraGameType}" with visibility ${visibility}`
   );
 
   return {

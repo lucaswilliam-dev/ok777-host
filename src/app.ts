@@ -16,10 +16,10 @@ app.set('trust proxy', true);
 
 // app.use(morgan('dev'));
 // app.use(helmet());
+
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: "10mb" }))
 app.use(express.urlencoded({ limit: "10mb", extended: true }))
-
 
 // ----------------- Global CORS + CORP -----------------
 app.use((req, res, next) => {

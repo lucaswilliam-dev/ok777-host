@@ -110,6 +110,10 @@ router.get("/by-category", async (req, res) => {
         const extraGameType = req.query.extraGameType as string;
         const page = req.query.page ? Number(req.query.page) : 1;
         const limit = req.query.limit ? Number(req.query.limit) : 100;
+        // Parse visibility (language code) - if not provided or empty, default to null (show all games)
+        const visibility = req.query.visibility 
+            ? (req.query.visibility === 'null' || req.query.visibility === '' ? null : Number(req.query.visibility))
+            : null;
 
         console.log('========================================');
         console.log('[API /by-category] Request received');
@@ -117,6 +121,7 @@ router.get("/by-category", async (req, res) => {
         console.log('extraGameType:', extraGameType);
         console.log('page:', page);
         console.log('limit:', limit);
+        console.log('visibility (language code):', visibility);
         console.log('========================================');
 
         if (!extraGameType) {
@@ -131,12 +136,14 @@ router.get("/by-category", async (req, res) => {
             extraGameType,
             page,
             limit,
+            visibility,
         });
 
         console.log('[API /by-category] Returning result:', {
             gamesCount: result.data.length,
             total: result.meta.total,
-            category: extraGameType
+            category: extraGameType,
+            visibility: visibility
         });
 
         res.json({

@@ -99,6 +99,10 @@ router.get("/provided-games", async (req, res) => {
   const categoryName = req.query.category as string | undefined;
   const providerName = req.query.provider as string | undefined;
   const statusFilter = req.query.status as string | undefined; // Status filter: ACTIVATED, DEACTIVATED, or All
+  // Parse visibility (language code) - if not provided or empty, default to null (show all games)
+  const visibility = req.query.visibility 
+    ? (req.query.visibility === 'null' || req.query.visibility === '' ? null : Number(req.query.visibility))
+    : null;
 
   try {
     // IMPORTANT: GameStore page filters ONLY on Game table fields (gameType, provider)
@@ -138,6 +142,7 @@ router.get("/provided-games", async (req, res) => {
       categoryGameType: categoryGameType, // Filter by Game.gameType field directly (no GameCategory lookup)
       search: search,
       status: status, // Pass status filter to backend
+      visibility: visibility, // Pass visibility (language code) filter
       // Legacy support: only use productCode if explicitly provided
       ...(productCode ? { providerProductCodes: [productCode] } : {}),
       // No enabled filter - fetch all games

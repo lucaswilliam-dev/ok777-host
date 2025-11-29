@@ -939,8 +939,9 @@ export const getGames = async (options: {
     providerName?: string; // Provider name to filter by Game.provider field directly
     providerProductCodes?: number[]; // Legacy support: filter by product codes
     status?: string; // Filter by status: ACTIVATED, DEACTIVATED, or undefined for all
+    visibility?: number | null; // Language code for filtering (null = show all games)
 }) => {
-    const { categoryId, categoryGameType, page = 1, limit = 10, enabled, search , providerId, providerName, providerProductCodes, status} = options;
+    const { categoryId, categoryGameType, page = 1, limit = 10, enabled, search , providerId, providerName, providerProductCodes, status, visibility} = options;
 
     const skip = (page - 1) * limit;
 
@@ -978,6 +979,14 @@ export const getGames = async (options: {
     }
     
     if (search) where.gameName = { contains: search, mode: "insensitive" };
+
+    // Filter by visibility if language code is provided (not null)
+    // If visibility is null, show all games (English = all games)
+    if (visibility !== null && visibility !== undefined) {
+        where.visibility = {
+            array_contains: [visibility],
+        };
+    }
 
     // Get all categories to map category IDs to names
     const categories = await prisma.gameCategory.findMany();
